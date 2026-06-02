@@ -1,0 +1,28 @@
+{
+  "name": "runmate-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote live running app MVP monorepo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace @runmate/api run dev",
+    "dev:mobile": "npm --workspace @runmate/mobile run dev",
+    "db:migrate": "npm --workspace @runmate/api run db:migrate",
+    "build": "npm --workspaces run build",
+    "typecheck": "npm --workspaces run typecheck",
+    "test": "npm --workspaces run test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "~19.1.10",
+    "react": "^19.1.0",
+    "react-native": "^0.81.5",
+    "typescript": "^5.7.2"
+  }
+}
