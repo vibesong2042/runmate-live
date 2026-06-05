@@ -129,6 +129,10 @@ CREATE TABLE activity_records (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX activity_records_session_user_unique_idx
+ON activity_records (session_id, user_id)
+WHERE session_id IS NOT NULL;
+
 CREATE TABLE challenges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   title text NOT NULL,

@@ -50,7 +50,13 @@ export interface RunMateStore {
   ): Promise<Friendship | undefined>;
 
   createSession(input: CreateSessionInput): Promise<RunningSession>;
+  listSessionsForUser(userId: string): Promise<RunningSession[]>;
   getSession(sessionId: string): Promise<RunningSession | undefined>;
+  updateSessionParticipantStatus(
+    sessionId: string,
+    userId: string,
+    status: RunningSessionParticipant["status"],
+  ): Promise<RunningSessionParticipant | undefined>;
   updateSessionStatus(
     sessionId: string,
     status: Extract<RunningSession["status"], "active" | "finished">,

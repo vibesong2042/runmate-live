@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type {
   ActivityRecord,
   Friendship,
@@ -11,6 +13,16 @@ import { calculateAveragePaceSecPerKm } from "@runmate/shared";
 import { DEV_USER_ID } from "../auth/dev-user.js";
 import type { CreateSessionInput, PrivacyConsent, RunMateStore } from "./store-types.js";
 
+interface StoreSnapshot {
+  users: User[];
+  friendships: Friendship[];
+  sessions: RunningSession[];
+  participants: RunningSessionParticipant[];
+  liveLocations: Array<[string, LiveLocation[]]>;
+  activities: ActivityRecord[];
+  privacyConsents: Array<[string, PrivacyConsent[]]>;
+}
+
 export class InMemoryStore implements RunMateStore {
   readonly users = new Map<string, User>();
   readonly friendships = new Map<string, Friendship>();
@@ -20,7 +32,16 @@ export class InMemoryStore implements RunMateStore {
   readonly activities = new Map<string, ActivityRecord>();
   readonly privacyConsents = new Map<string, PrivacyConsent[]>();
 
-  constructor() {
+  constructor(private readonly persistencePath?: string) {
+    this.loadSnapshot();
+    this.ensureDevUser();
+    this.persist();
+  }
+
+  private ensureDevUser(): void {
+    if (this.users.has(DEV_USER_ID)) {
+      return;
+    }
     const now = new Date().toISOString();
     this.users.set(DEV_USER_ID, {
       id: DEV_USER_ID,
@@ -34,6 +55,80 @@ export class InMemoryStore implements RunMateStore {
       createdAt: now,
       updatedAt: now,
     });
+  }
+
+  private loadSnapshot(): void {
+    if (!this.persistencePath || !existsSync(this.persistencePath)) {
+      return;
+    }
+    try {
+      const snapshot = JSON.parse(readFileSync(this.persistencePath, "utf8")) as Partial<StoreSnapshot>;
+      if (Array.isArray(snapshot.users)) {
+        this.users.clear();
+        for (const user of snapshot.users) {
+          this.users.set(user.id, user);
+        }
+      }
+      if (Array.isArray(snapshot.friendships)) {
+        this.friendships.clear();
+        for (const friendship of snapshot.friendships) {
+          this.friendships.set(friendship.id, friendship);
+        }
+      }
+      if (Array.isArray(snapshot.sessions)) {
+        this.sessions.clear();
+        for (const session of snapshot.sessions) {
+          this.sessions.set(session.id, session);
+        }
+      }
+      if (Array.isArray(snapshot.participants)) {
+        this.participants.clear();
+        for (const participant of snapshot.participants) {
+          this.participants.set(participant.id, participant);
+        }
+      }
+      if (Array.isArray(snapshot.liveLocations)) {
+        this.liveLocations.clear();
+        for (const [key, locations] of snapshot.liveLocations) {
+          this.liveLocations.set(key, locations);
+        }
+      }
+      if (Array.isArray(snapshot.activities)) {
+        this.activities.clear();
+        for (const activity of snapshot.activities) {
+          this.activities.set(activity.id, activity);
+        }
+      }
+      if (Array.isArray(snapshot.privacyConsents)) {
+        this.privacyConsents.clear();
+        for (const [userId, consents] of snapshot.privacyConsents) {
+          this.privacyConsents.set(userId, consents);
+        }
+      }
+    } catch {
+      // Development persistence should never prevent the API from booting.
+    }
+  }
+
+  private persist(): void {
+    if (!this.persistencePath) {
+      return;
+    }
+    try {
+      mkdirSync(dirname(this.persistencePath), { recursive: true });
+      const snapshot: StoreSnapshot = {
+        users: [...this.users.values()],
+        friendships: [...this.friendships.values()],
+        sessions: [...this.sessions.values()],
+        participants: [...this.participants.values()],
+        liveLocations: [...this.liveLocations.entries()],
+        activities: [...this.activities.values()],
+        privacyConsents: [...this.privacyConsents.entries()],
+      };
+      writeFileSync(this.persistencePath, JSON.stringify(snapshot, null, 2));
+    } catch {
+      // Keep development API responsive even if the file cannot be written.
+    }
   }
 
   async createUser(input: Pick<User, "email" | "nickname" | "runnerId" | "provider">): Promise<User> {
@@ -50,6 +145,7 @@ export class InMemoryStore implements RunMateStore {
       updatedAt: now,
     };
     this.users.set(user.id, user);
+    this.persist();
     return user;
   }
 
@@ -72,6 +168,7 @@ export class InMemoryStore implements RunMateStore {
     }
     user.defaultPrivacy = defaultPrivacy;
     user.updatedAt = new Date().toISOString();
+    this.persist();
     return user;
   }
 
@@ -96,6 +193,7 @@ export class InMemoryStore implements RunMateStore {
       user.updatedAt = consent.consentedAt;
     }
 
+    this.persist();
     return consent;
   }
 
@@ -113,6 +211,7 @@ export class InMemoryStore implements RunMateStore {
       createdAt: now,
     };
     this.friendships.set(friendship.id, friendship);
+    this.persist();
     return friendship;
   }
 
@@ -140,6 +239,7 @@ export class InMemoryStore implements RunMateStore {
     }
     friendship.status = status;
     friendship.acceptedAt = status === "accepted" ? new Date().toISOString() : friendship.acceptedAt;
+    this.persist();
     return friendship;
   }
 
@@ -174,11 +274,46 @@ export class InMemoryStore implements RunMateStore {
       this.participants.set(participant.id, participant);
     }
 
+    this.persist();
     return session;
   }
 
   async getSession(sessionId: string): Promise<RunningSession | undefined> {
     return this.sessions.get(sessionId);
+  }
+
+  async listSessionsForUser(userId: string): Promise<RunningSession[]> {
+    const sessionIds = new Set(
+      [...this.participants.values()]
+        .filter((participant) => participant.userId === userId)
+        .map((participant) => participant.sessionId),
+    );
+    return [...this.sessions.values()]
+      .filter((session) => sessionIds.has(session.id))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }
+
+  async updateSessionParticipantStatus(
+    sessionId: string,
+    userId: string,
+    status: RunningSessionParticipant["status"],
+  ): Promise<RunningSessionParticipant | undefined> {
+    const participant = [...this.participants.values()].find(
+      (item) => item.sessionId === sessionId && item.userId === userId,
+    );
+    if (!participant) {
+      return undefined;
+    }
+    const timestamp = new Date().toISOString();
+    participant.status = status;
+    if ((status === "joined" || status === "ready" || status === "running") && !participant.startedAt) {
+      participant.startedAt = timestamp;
+    }
+    if (status === "finished") {
+      participant.endedAt = timestamp;
+    }
+    this.persist();
+    return participant;
   }
 
   async updateSessionStatus(
@@ -197,6 +332,7 @@ export class InMemoryStore implements RunMateStore {
     if (status === "finished") {
       session.endedAt = timestamp;
     }
+    this.persist();
     return session;
   }
 
@@ -220,6 +356,7 @@ export class InMemoryStore implements RunMateStore {
       participant.currentPaceSecPerKm = location.currentPaceSecPerKm;
       participant.lastLocationAt = location.recordedAt;
     }
+    this.persist();
   }
 
   async listLatestLocations(sessionId: string): Promise<LiveLocation[]> {
@@ -247,6 +384,13 @@ export class InMemoryStore implements RunMateStore {
     return participants
       .filter((participant) => participant.totalDistanceMeters > 0)
       .map((participant) => {
+        const existingActivity = [...this.activities.values()].find(
+          (activity) => activity.sessionId === sessionId && activity.userId === participant.userId,
+        );
+        if (existingActivity) {
+          return existingActivity;
+        }
+
         const movingTimeSeconds = participant.movingTimeSeconds || durationSeconds;
         const averagePaceSecPerKm =
           participant.averagePaceSecPerKm ??
@@ -265,6 +409,7 @@ export class InMemoryStore implements RunMateStore {
           createdAt: endedAt,
         };
         this.activities.set(activity.id, activity);
+        this.persist();
         return activity;
       });
   }

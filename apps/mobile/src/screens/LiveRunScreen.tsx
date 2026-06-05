@@ -1,23 +1,47 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import * as Speech from "expo-speech";
 import { formatPace } from "@runmate/shared";
+import type {
+  RunningSessionFinishResponseDto,
+  RunningSessionResponseDto,
+  SessionParticipantSummaryDto,
+} from "../api/client";
 import { LiveRunMap } from "../components/LiveRunMap";
 import { MetricTile } from "../components/MetricTile";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useLiveRunTracker } from "../hooks/useLiveRunTracker";
+import { savePendingRunResult } from "../storage/pending-run-results";
+import type { RunResultSummary } from "./ResultScreen";
 
 interface LiveRunScreenProps {
   sessionId: string;
   accessToken: string;
+  authenticatedGet: <T>(path: string) => Promise<T>;
   authenticatedPost: <T>(path: string, body?: unknown) => Promise<T>;
   userId: string;
-  onFinish: () => void;
+  onFinish: (result: RunResultSummary) => void;
 }
 
-export function LiveRunScreen({ sessionId, accessToken, authenticatedPost, userId, onFinish }: LiveRunScreenProps) {
-  const [cheers, setCheers] = useState(0);
+export function LiveRunScreen({
+  sessionId,
+  accessToken,
+  authenticatedGet,
+  authenticatedPost,
+  userId,
+  onFinish,
+}: LiveRunScreenProps) {
+  const [cheerStatus, setCheerStatus] = useState("No cheers yet");
+  const [hasFailedCheer, setHasFailedCheer] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
   const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
+  const [participants, setParticipants] = useState<SessionParticipantSummaryDto[]>([]);
+  const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(false);
+  const [speechLanguage, setSpeechLanguage] = useState<string>();
+  const [voiceStatus, setVoiceStatus] = useState("Voice preparing...");
+  const [hasSpokenStart, setHasSpokenStart] = useState(false);
+  const [nextVoiceMilestoneMeters, setNextVoiceMilestoneMeters] = useState(500);
+  const [spokenCheerId, setSpokenCheerId] = useState<string>();
   const tracker = useLiveRunTracker({ sessionId, userId, accessToken });
   const elapsedLabel = useMemo(() => formatElapsed(tracker.elapsedSeconds), [tracker.elapsedSeconds]);
   const currentPoint = useMemo(() => {
@@ -48,15 +72,146 @@ export function LiveRunScreen({ sessionId, accessToken, authenticatedPost, userI
     if (tracker.syncStatus === "connecting") {
       return "Live sync: connecting";
     }
+    if (tracker.syncStatus === "reconnecting") {
+      return "Live sync: reconnecting, tracking locally";
+    }
     if (tracker.syncStatus === "error" || tracker.syncStatus === "closed") {
       return "Live sync: offline, tracking locally";
     }
     return "Live sync: idle";
   }, [tracker.syncStatus]);
+  const participantRows = useMemo<SessionParticipantSummaryDto[]>(() => {
+    const serverRows = participants.length
+      ? participants
+      : [
+          {
+            participantId: "local",
+            userId,
+            nickname: "You",
+            isHost: true,
+            status: "running" as const,
+            totalDistanceMeters: tracker.distanceMeters,
+            movingTimeSeconds: tracker.elapsedSeconds,
+            averagePaceSecPerKm: tracker.averagePaceSecPerKm,
+            currentPaceSecPerKm: tracker.currentPaceSecPerKm,
+          },
+        ];
+    return serverRows.map((participant) => {
+      const remoteLocation = tracker.remoteLocations[participant.userId];
+      const remoteStatus = tracker.participantStatuses[participant.userId];
+      if (participant.userId === userId) {
+        return {
+          ...participant,
+          nickname: "You",
+          totalDistanceMeters: tracker.distanceMeters,
+          movingTimeSeconds: tracker.elapsedSeconds,
+          averagePaceSecPerKm: tracker.averagePaceSecPerKm,
+          currentPaceSecPerKm: tracker.currentPaceSecPerKm,
+          status: tracker.isTracking ? "running" : participant.status,
+        };
+      }
+      return {
+        ...participant,
+        totalDistanceMeters: remoteLocation?.distanceMeters ?? participant.totalDistanceMeters,
+        averagePaceSecPerKm: remoteLocation?.averagePaceSecPerKm ?? participant.averagePaceSecPerKm,
+        currentPaceSecPerKm: remoteLocation?.currentPaceSecPerKm ?? participant.currentPaceSecPerKm,
+        lastLocationAt: remoteLocation?.lastUpdatedAt ?? participant.lastLocationAt,
+        status: normalizeParticipantStatus(remoteStatus?.status ?? remoteLocation?.state) ?? participant.status,
+      };
+    });
+  }, [
+    participants,
+    tracker.averagePaceSecPerKm,
+    tracker.currentPaceSecPerKm,
+    tracker.distanceMeters,
+    tracker.elapsedSeconds,
+    tracker.isTracking,
+    tracker.participantStatuses,
+    tracker.remoteLocations,
+    userId,
+  ]);
+  const leaderGapLabel = useMemo(() => {
+    const sorted = [...participantRows].sort((a, b) => b.totalDistanceMeters - a.totalDistanceMeters);
+    const leader = sorted[0];
+    const you = participantRows.find((participant) => participant.userId === userId);
+    if (!leader || !you || leader.userId === userId) {
+      return "Leading";
+    }
+    const gapMeters = Math.max(0, leader.totalDistanceMeters - you.totalDistanceMeters);
+    return `-${(gapMeters / 1000).toFixed(2)} km`;
+  }, [participantRows, userId]);
+  const cheerTarget = useMemo(
+    () =>
+      participantRows
+        .filter((participant) => participant.userId !== userId)
+        .sort((a, b) => b.totalDistanceMeters - a.totalDistanceMeters)[0],
+    [participantRows, userId],
+  );
+  const latestCheerLabel = useMemo(() => {
+    if (!tracker.latestCheer) {
+      return undefined;
+    }
+    const sender = participantRows.find((participant) => participant.userId === tracker.latestCheer?.fromUserId);
+    return `Cheer from ${sender?.nickname ?? "friend"} - ${formatCheerCode(tracker.latestCheer.cheerCode)}`;
+  }, [participantRows, tracker.latestCheer]);
+  const totalCheers = tracker.sentCheers + tracker.receivedCheers.length;
+  const useKoreanVoice = !speechLanguage || speechLanguage.toLowerCase().startsWith("ko");
+  const speakVoice = useCallback(
+    async (text: string, reason: string) => {
+      if (!voiceFeedbackEnabled) {
+        setVoiceStatus("Voice feedback off");
+        return;
+      }
+      try {
+        await Speech.stop();
+        setVoiceStatus(`Voice queued: ${reason}`);
+        Speech.speak(text, {
+          language: speechLanguage,
+          pitch: 1,
+          rate: 0.95,
+          onStart: () => setVoiceStatus(`Speaking: ${reason}`),
+          onDone: () => setVoiceStatus(`Voice done: ${reason}`),
+          onError: (error) => setVoiceStatus(`Voice error: ${error.message}`),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown speech error";
+        setVoiceStatus(`Voice error: ${message}`);
+      }
+    },
+    [speechLanguage, voiceFeedbackEnabled],
+  );
 
   useEffect(() => {
     void tracker.start();
   }, [tracker.start]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    async function loadParticipants() {
+      try {
+        const response = await authenticatedGet<RunningSessionResponseDto>(`/running-sessions/${sessionId}`);
+        if (isMounted) {
+          setParticipants(response.participantSummaries ?? []);
+          setVoiceFeedbackEnabled(response.session.voiceFeedbackEnabled);
+        }
+      } catch {
+        if (isMounted) {
+          setParticipants([]);
+        }
+      }
+    }
+    void loadParticipants();
+    timer = setInterval(() => {
+      void loadParticipants();
+    }, 3000);
+    return () => {
+      isMounted = false;
+      if (timer) {
+        clearInterval(timer);
+      }
+    };
+  }, [authenticatedGet, sessionId]);
 
   useEffect(() => {
     if (!currentPoint) {
@@ -71,14 +226,159 @@ export function LiveRunScreen({ sessionId, accessToken, authenticatedPost, userI
     });
   }, [currentPoint]);
 
+  useEffect(() => {
+    let isMounted = true;
+    Speech.getAvailableVoicesAsync()
+      .then((voices) => {
+        if (!isMounted) {
+          return;
+        }
+        const preferredVoice =
+          voices.find((voice) => voice.language.toLowerCase().startsWith("ko")) ??
+          voices.find((voice) => voice.language.toLowerCase().startsWith("en"));
+        setSpeechLanguage(preferredVoice?.language);
+        setVoiceStatus(preferredVoice ? `Voice ready: ${preferredVoice.language}` : "Voice ready: default");
+      })
+      .catch((error) => {
+        if (isMounted) {
+          const message = error instanceof Error ? error.message : "Speech engine unavailable";
+          setVoiceStatus(`Voice setup error: ${message}`);
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Speech.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!voiceFeedbackEnabled || !tracker.isTracking || hasSpokenStart) {
+      return;
+    }
+    setHasSpokenStart(true);
+    void speakVoice(
+      useKoreanVoice ? "러닝을 시작합니다. 실시간 공유가 켜져 있습니다." : "Run started. Live sharing is on.",
+      "run start",
+    );
+  }, [hasSpokenStart, speakVoice, tracker.isTracking, useKoreanVoice, voiceFeedbackEnabled]);
+
+  useEffect(() => {
+    if (!voiceFeedbackEnabled || !tracker.isTracking || tracker.distanceMeters < nextVoiceMilestoneMeters) {
+      return;
+    }
+    const milestoneKilometers = nextVoiceMilestoneMeters / 1000;
+    void speakVoice(
+      useKoreanVoice
+        ? `${milestoneKilometers.toFixed(1)} 킬로미터 완료. 평균 페이스는 킬로미터당 ${formatPace(
+            tracker.averagePaceSecPerKm,
+          )} 입니다.`
+        : `${milestoneKilometers.toFixed(1)} kilometers completed. Average pace ${formatPace(
+            tracker.averagePaceSecPerKm,
+          )} per kilometer.`,
+      `${milestoneKilometers.toFixed(1)} km`,
+    );
+    setNextVoiceMilestoneMeters((value) => value + 500);
+  }, [
+    nextVoiceMilestoneMeters,
+    speakVoice,
+    tracker.averagePaceSecPerKm,
+    tracker.distanceMeters,
+    tracker.isTracking,
+    useKoreanVoice,
+    voiceFeedbackEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!voiceFeedbackEnabled || !tracker.latestCheer || tracker.latestCheer.id === spokenCheerId) {
+      return;
+    }
+    const sender = participantRows.find((participant) => participant.userId === tracker.latestCheer?.fromUserId);
+    setSpokenCheerId(tracker.latestCheer.id);
+    void speakVoice(
+      useKoreanVoice
+        ? `${sender?.nickname ?? "친구"}에게서 응원이 도착했습니다. ${formatCheerCodeKorean(
+            tracker.latestCheer.cheerCode,
+          )}.`
+        : `Cheer from ${sender?.nickname ?? "friend"}. ${formatCheerCode(tracker.latestCheer.cheerCode)}.`,
+      "cheer received",
+    );
+  }, [participantRows, speakVoice, spokenCheerId, tracker.latestCheer, useKoreanVoice, voiceFeedbackEnabled]);
+
   async function finishRun() {
     setIsFinishing(true);
+    const localResult = buildRunResult({
+      averagePaceSecPerKm: tracker.averagePaceSecPerKm,
+      cheers: totalCheers,
+      distanceMeters: tracker.distanceMeters,
+      durationSeconds: tracker.elapsedSeconds,
+      participantRows,
+      saveStatus: "pending",
+      sessionId,
+      userId,
+    });
     tracker.stop();
     try {
-      await authenticatedPost(`/running-sessions/${sessionId}/finish`, {});
+      const finished = await authenticatedPost<RunningSessionFinishResponseDto>(`/running-sessions/${sessionId}/finish`, {});
+      onFinish(
+        buildRunResult({
+          averagePaceSecPerKm: tracker.averagePaceSecPerKm,
+          cheers: totalCheers,
+          distanceMeters: tracker.distanceMeters,
+          durationSeconds: tracker.elapsedSeconds,
+          participantRows: mergeFinishedParticipants(finished.participantSummaries, participantRows, userId, {
+            averagePaceSecPerKm: tracker.averagePaceSecPerKm,
+            distanceMeters: tracker.distanceMeters,
+            movingTimeSeconds: tracker.elapsedSeconds,
+          }),
+          saveStatus: "saved",
+          sessionId,
+          userId,
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The API was unavailable when finishing this run.";
+      const pendingResultId = `${sessionId}-${Date.now()}`;
+      const pendingResult: RunResultSummary = {
+        ...localResult,
+        pendingResultId,
+        saveError: message,
+        saveStatus: "pending",
+      };
+      try {
+        await savePendingRunResult({
+          id: pendingResultId,
+          userId,
+          sessionId,
+          result: pendingResult,
+          createdAt: new Date().toISOString(),
+          lastError: message,
+        });
+      } catch {
+        // The result screen still keeps the local summary for the current app session.
+      }
+      onFinish(pendingResult);
     } finally {
       setIsFinishing(false);
-      onFinish();
+    }
+  }
+
+  function sendCheer() {
+    if (!cheerTarget) {
+      setCheerStatus("No friend is in this run yet.");
+      return;
+    }
+    const sent = tracker.sendCheer(cheerTarget.userId, "nice");
+    if (sent) {
+      setCheerStatus(`Cheer sent to ${cheerTarget.nickname}`);
+      setHasFailedCheer(false);
+    } else {
+      setHasFailedCheer(true);
+      setCheerStatus("Cheer was not sent. Live sync is reconnecting, so try again in a moment.");
     }
   }
 
@@ -102,32 +402,162 @@ export function LiveRunScreen({ sessionId, accessToken, authenticatedPost, userI
         <MetricTile label="Current Pace" value={`${formatPace(tracker.currentPaceSecPerKm)}/km`} />
       </View>
       <View style={styles.metricsRow}>
-        <MetricTile label="Minsu Gap" value="+120 m" />
-        <MetricTile label="Cheers" value={`${cheers}`} />
+        <MetricTile label="Leader Gap" value={leaderGapLabel} />
+        <MetricTile label="Cheers" value={`${totalCheers}`} />
       </View>
 
       <View style={styles.friendPanel}>
         <Text style={styles.sectionTitle}>Group Status</Text>
         <Text style={styles.syncLine}>{syncStatusLabel}</Text>
-        <Text style={styles.friendLine}>
-          You - {(tracker.distanceMeters / 1000).toFixed(2)} km - {formatPace(tracker.averagePaceSecPerKm)}/km
-        </Text>
-        <Text style={styles.friendLine}>Minsu - 1.12 km - 5:48/km</Text>
-        <Text style={styles.friendLine}>Jihyun - 0.96 km - 6:12/km</Text>
+        {tracker.syncMessage ? <Text style={styles.syncDetail}>{tracker.syncMessage}</Text> : null}
+        {tracker.pendingLocationUpdates ? (
+          <Text style={styles.syncDetail}>1 latest route point is waiting to sync.</Text>
+        ) : null}
+        {voiceFeedbackEnabled ? <Text style={styles.voiceLine}>{voiceStatus}</Text> : null}
+        {latestCheerLabel ? <Text style={styles.cheerLine}>{latestCheerLabel}</Text> : null}
+        {participantRows.map((participant) => (
+          <Text key={participant.participantId} style={styles.friendLine}>
+            {participant.nickname}
+            {participant.isHost ? " (Host)" : ""} - {(participant.totalDistanceMeters / 1000).toFixed(2)} km -{" "}
+            {formatPace(participant.averagePaceSecPerKm)}/km - {participant.status}
+          </Text>
+        ))}
       </View>
 
       <View style={styles.actions}>
-        <PrimaryButton label="Send Cheer" variant="secondary" onPress={() => setCheers((value) => value + 1)} />
+        <PrimaryButton
+          disabled={!cheerTarget}
+          label={hasFailedCheer ? "Retry Cheer" : "Send Cheer"}
+          variant="secondary"
+          onPress={sendCheer}
+        />
+        <PrimaryButton
+          disabled={!voiceFeedbackEnabled}
+          label="Test Voice"
+          variant="secondary"
+          onPress={() => void speakVoice(useKoreanVoice ? "음성 안내 테스트입니다." : "Voice feedback test.", "test")}
+        />
+        <Text style={styles.cheerStatus}>{cheerStatus}</Text>
         <PrimaryButton label={isFinishing ? "Finishing..." : "Finish"} variant="danger" onPress={finishRun} />
       </View>
     </ScrollView>
   );
 }
 
+function buildRunResult({
+  averagePaceSecPerKm,
+  cheers,
+  distanceMeters,
+  durationSeconds,
+  participantRows,
+  saveStatus = "saved",
+  sessionId,
+  userId,
+}: {
+  averagePaceSecPerKm?: number;
+  cheers: number;
+  distanceMeters: number;
+  durationSeconds: number;
+  participantRows: SessionParticipantSummaryDto[];
+  saveStatus?: RunResultSummary["saveStatus"];
+  sessionId: string;
+  userId: string;
+}): RunResultSummary {
+  return {
+    averagePaceSecPerKm,
+    cheers,
+    distanceMeters,
+    durationSeconds,
+      participants: participantRows.map((participant) =>
+      participant.userId === userId
+        ? {
+            ...participant,
+            nickname: "You",
+            totalDistanceMeters: distanceMeters,
+            movingTimeSeconds: durationSeconds,
+            averagePaceSecPerKm,
+          }
+        : participant,
+    ),
+    saveStatus,
+    sessionId,
+  };
+}
+
+function mergeFinishedParticipants(
+  finishedParticipants: SessionParticipantSummaryDto[] | undefined,
+  currentParticipants: SessionParticipantSummaryDto[],
+  userId: string,
+  local: { averagePaceSecPerKm?: number; distanceMeters: number; movingTimeSeconds: number },
+): SessionParticipantSummaryDto[] {
+  const source = finishedParticipants?.length ? finishedParticipants : currentParticipants;
+  return source.map((participant) =>
+    participant.userId === userId
+      ? {
+          ...participant,
+          nickname: "You",
+          totalDistanceMeters: local.distanceMeters,
+          movingTimeSeconds: local.movingTimeSeconds,
+          averagePaceSecPerKm: local.averagePaceSecPerKm,
+        }
+      : participant,
+  );
+}
+
+function normalizeParticipantStatus(status?: string): SessionParticipantSummaryDto["status"] | undefined {
+  if (!status) {
+    return undefined;
+  }
+  if (status === "lost_signal") {
+    return "running";
+  }
+  if (
+    status === "invited" ||
+    status === "joined" ||
+    status === "ready" ||
+    status === "running" ||
+    status === "paused" ||
+    status === "finished" ||
+    status === "left"
+  ) {
+    return status;
+  }
+  return undefined;
+}
+
 function formatElapsed(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatCheerCode(code: string): string {
+  return code
+    .split("_")
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatCheerCodeKorean(code: string): string {
+  if (code === "nice") {
+    return "좋아요";
+  }
+  if (code === "keep_pace") {
+    return "페이스를 유지해요";
+  }
+  if (code === "last_km") {
+    return "마지막 1킬로미터입니다";
+  }
+  if (code === "push") {
+    return "조금만 더 힘내요";
+  }
+  if (code === "almost_there") {
+    return "거의 다 왔어요";
+  }
+  if (code === "great_finish") {
+    return "멋진 완주입니다";
+  }
+  return "응원이 도착했습니다";
 }
 
 const styles = StyleSheet.create({
@@ -175,7 +605,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
   },
+  syncDetail: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  cheerLine: {
+    color: "#7c2d12",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  voiceLine: {
+    color: "#475569",
+    fontSize: 13,
+    fontWeight: "800",
+  },
   actions: {
     gap: 10,
+  },
+  cheerStatus: {
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
   },
 });

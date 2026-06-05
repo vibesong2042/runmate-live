@@ -1,6 +1,30 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildApp } from "../app.js";
+import { assertDeploySafeConfig, loadConfig } from "../config.js";
+
+test("preview deployment rejects unsafe development defaults", () => {
+  const previousEnv = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
+    JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
+    REQUIRE_AUTH: process.env.REQUIRE_AUTH,
+    RUNMATE_ENV: process.env.RUNMATE_ENV,
+    STORE_DRIVER: process.env.STORE_DRIVER,
+  };
+  process.env.RUNMATE_ENV = "preview";
+  process.env.STORE_DRIVER = "in-memory";
+  process.env.REQUIRE_AUTH = "false";
+  delete process.env.JWT_ACCESS_SECRET;
+  delete process.env.JWT_REFRESH_SECRET;
+  delete process.env.DATABASE_URL;
+
+  try {
+    assert.throws(() => assertDeploySafeConfig(loadConfig()), /Unsafe preview API configuration/);
+  } finally {
+    restoreEnv(previousEnv);
+  }
+});
 
 test("require auth mode rejects REST requests without a bearer token", async () => {
   const previousRequireAuth = process.env.REQUIRE_AUTH;
@@ -120,6 +144,15 @@ test("runner can create a session, upload location, and finish with an activity"
     const finishedBody = finished.json<{ activities: unknown[]; participants: unknown[] }>();
     assert.equal(finishedBody.participants.length, 1);
     assert.equal(finishedBody.activities.length, 1);
+
+    const finishedAgain = await app.inject({
+      method: "POST",
+      url: `/running-sessions/${sessionId}/finish`,
+      headers,
+      payload: {},
+    });
+    assert.equal(finishedAgain.statusCode, 200);
+    assert.equal(finishedAgain.json<{ activities: unknown[] }>().activities.length, 1);
   } finally {
     await app.close();
   }
@@ -186,7 +219,83 @@ test("two development users can connect with a friend invite code", async () => 
     });
     assert.equal(secondFriends.statusCode, 200);
     assert.equal(secondFriends.json<{ friends: unknown[] }>().friends.length, 1);
+
+    const groupSession = await app.inject({
+      method: "POST",
+      url: "/running-sessions",
+      headers: {
+        authorization: `Bearer ${first.accessToken}`,
+        "content-type": "application/json",
+      },
+      payload: {
+        title: "Friend 5K",
+        type: "group",
+        targetDistanceMeters: 5000,
+        friendUserIds: [second.user.id],
+        locationSharingRequired: true,
+        voiceFeedbackEnabled: true,
+      },
+    });
+    assert.equal(groupSession.statusCode, 201);
+    const groupSessionBody = groupSession.json<{
+      session: { id: string };
+      participants: unknown[];
+      participantSummaries: unknown[];
+    }>();
+    assert.equal(groupSessionBody.participants.length, 2);
+    assert.equal(groupSessionBody.participantSummaries.length, 2);
+
+    const invitations = await app.inject({
+      method: "GET",
+      url: "/running-sessions/invitations",
+      headers: { authorization: `Bearer ${second.accessToken}` },
+    });
+    assert.equal(invitations.statusCode, 200);
+    assert.equal(invitations.json<{ invitations: unknown[] }>().invitations.length, 1);
+
+    const joined = await app.inject({
+      method: "POST",
+      url: `/running-sessions/${groupSessionBody.session.id}/join`,
+      headers: { authorization: `Bearer ${second.accessToken}` },
+    });
+    assert.equal(joined.statusCode, 200);
+
+    const outsiderLogin = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      headers: { "content-type": "application/json" },
+      payload: { runnerId: "runner_gamma", nickname: "Runner Gamma" },
+    });
+    assert.equal(outsiderLogin.statusCode, 200);
+    const outsider = outsiderLogin.json<{ accessToken: string; user: { id: string } }>();
+
+    const blockedSession = await app.inject({
+      method: "POST",
+      url: "/running-sessions",
+      headers: {
+        authorization: `Bearer ${first.accessToken}`,
+        "content-type": "application/json",
+      },
+      payload: {
+        title: "Blocked 5K",
+        type: "group",
+        friendUserIds: [outsider.user.id],
+        locationSharingRequired: true,
+        voiceFeedbackEnabled: true,
+      },
+    });
+    assert.equal(blockedSession.statusCode, 403);
   } finally {
     await app.close();
   }
 });
+
+function restoreEnv(values: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}

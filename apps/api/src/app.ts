@@ -35,7 +35,11 @@ export async function buildApp(options: { logger?: boolean } = {}): Promise<Fast
   await app.register(cors, { origin: config.corsOrigin });
   await app.register(websocket);
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", async () => ({
+    ok: true,
+    runtimeEnv: config.runtimeEnv,
+    storeDriver: config.storeDriver,
+  }));
 
   await registerAuthRoutes(app);
   await registerPrivacyRoutes(app);

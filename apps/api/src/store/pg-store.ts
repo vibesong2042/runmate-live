@@ -338,6 +338,39 @@ export class PgStore implements RunMateStore {
     return result.rows[0] ? mapSession(result.rows[0]) : undefined;
   }
 
+  async listSessionsForUser(userId: string): Promise<RunningSession[]> {
+    const result = await this.pool.query(
+      `SELECT s.*
+       FROM running_sessions s
+       JOIN running_session_participants p ON p.session_id = s.id
+       WHERE p.user_id = $1
+       ORDER BY s.created_at DESC
+       LIMIT 50`,
+      [userId],
+    );
+    return result.rows.map(mapSession);
+  }
+
+  async updateSessionParticipantStatus(
+    sessionId: string,
+    userId: string,
+    status: RunningSessionParticipant["status"],
+  ): Promise<RunningSessionParticipant | undefined> {
+    const result = await this.pool.query(
+      `UPDATE running_session_participants
+       SET status = $3,
+           started_at = CASE
+             WHEN $3 IN ('joined', 'ready', 'running') AND started_at IS NULL THEN now()
+             ELSE started_at
+           END,
+           ended_at = CASE WHEN $3 = 'finished' THEN now() ELSE ended_at END
+       WHERE session_id = $1 AND user_id = $2
+       RETURNING *`,
+      [sessionId, userId, status],
+    );
+    return result.rows[0] ? mapParticipant(result.rows[0]) : undefined;
+  }
+
   async updateSessionStatus(
     sessionId: string,
     status: Extract<RunningSession["status"], "active" | "finished">,
@@ -449,7 +482,13 @@ export class PgStore implements RunMateStore {
          (id, user_id, session_id, distance_meters, duration_seconds, moving_time_seconds,
           average_pace_sec_per_km, route_polyline, visibility, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, '', 'friends', $8)
-         ON CONFLICT DO NOTHING
+         ON CONFLICT (session_id, user_id) WHERE session_id IS NOT NULL
+         DO UPDATE SET
+           distance_meters = EXCLUDED.distance_meters,
+           duration_seconds = EXCLUDED.duration_seconds,
+           moving_time_seconds = EXCLUDED.moving_time_seconds,
+           average_pace_sec_per_km = EXCLUDED.average_pace_sec_per_km,
+           created_at = EXCLUDED.created_at
          RETURNING *`,
         [
           randomUUID(),

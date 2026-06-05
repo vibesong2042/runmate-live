@@ -1,4 +1,8 @@
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
+import type { ActivityRecord, LiveLocation, RunningSession, RunningSessionParticipant } from "@runmate/shared";
+import { API_URL, ENABLE_DEMO_FALLBACK, buildApiConnectionHelp } from "../config/runtime";
+
+export { API_URL } from "../config/runtime";
+
 const REQUEST_TIMEOUT_MS = 8000;
 
 export interface AuthSession {
@@ -24,6 +28,42 @@ export interface FriendSummaryDto {
   currentPace?: string;
 }
 
+export interface SessionParticipantSummaryDto {
+  participantId: string;
+  userId: string;
+  nickname: string;
+  runnerId?: string;
+  isHost: boolean;
+  status: RunningSessionParticipant["status"];
+  totalDistanceMeters: number;
+  movingTimeSeconds: number;
+  averagePaceSecPerKm?: number;
+  currentPaceSecPerKm?: number;
+  lastLocationAt?: string;
+}
+
+export interface RunningSessionResponseDto {
+  session: RunningSession;
+  participants: RunningSessionParticipant[];
+  participantSummaries?: SessionParticipantSummaryDto[];
+}
+
+export interface RunningSessionFinishResponseDto extends RunningSessionResponseDto {
+  activities?: ActivityRecord[];
+}
+
+export interface RunningSessionInvitationsDto {
+  invitations: RunningSessionResponseDto[];
+}
+
+export interface LatestLocationsDto {
+  locations: LiveLocation[];
+}
+
+export interface ActivitiesResponseDto {
+  activities: ActivityRecord[];
+}
+
 interface RequestOptions {
   accessToken?: string;
 }
@@ -33,6 +73,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly path: string,
+    readonly detail?: { url?: string; reason?: string },
   ) {
     super(message);
   }
@@ -45,13 +86,14 @@ async function fetchWithTimeout(path: string, init: RequestInit): Promise<Respon
   }, REQUEST_TIMEOUT_MS);
 
   try {
-    return await fetch(`${API_URL}${path}`, {
+    const url = `${API_URL}${path}`;
+    return await fetch(url, {
       ...init,
       signal: controller.signal,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Network request failed";
-    throw new ApiError(`Cannot reach API at ${API_URL}. ${reason}`, 0, path);
+    throw new ApiError(buildApiConnectionHelp(reason), 0, path, { url: `${API_URL}${path}`, reason });
   } finally {
     clearTimeout(timeout);
   }
@@ -83,7 +125,7 @@ export async function apiGet<T>(path: string, options: RequestOptions = {}): Pro
       headers: buildHeaders(options),
     });
   } catch (error) {
-    const demoResponse = getDemoGetResponse<T>(path);
+    const demoResponse = ENABLE_DEMO_FALLBACK ? getDemoGetResponse<T>(path) : undefined;
     if (demoResponse) {
       return demoResponse;
     }
@@ -104,7 +146,7 @@ export async function apiPost<T>(path: string, body?: unknown, options: RequestO
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (error) {
-    const demoResponse = getDemoPostResponse<T>(path, body);
+    const demoResponse = ENABLE_DEMO_FALLBACK ? getDemoPostResponse<T>(path, body) : undefined;
     if (demoResponse) {
       return demoResponse;
     }
@@ -188,7 +230,23 @@ function getDemoPostResponse<T>(path: string, body?: unknown): T | undefined {
           finishedAt: undefined,
         },
       ],
+      participantSummaries: [
+        {
+          participantId: "demo-participant",
+          userId: "demo-user",
+          nickname: "Demo Runner",
+          runnerId: "demo_runner",
+          isHost: true,
+          status: "joined",
+          totalDistanceMeters: 0,
+          movingTimeSeconds: 0,
+        },
+      ],
     } as T;
+  }
+
+  if (/^\/running-sessions\/[^/]+\/join$/.test(path)) {
+    return { ok: true } as T;
   }
 
   if (/^\/running-sessions\/[^/]+\/(start|finish)$/.test(path)) {
@@ -206,6 +264,50 @@ function getDemoGetResponse<T>(path: string): T | undefined {
     } as T;
   }
 
+  if (path === "/activities") {
+    return {
+      activities: getDemoActivities(),
+    } as T;
+  }
+
+  if (path === "/running-sessions/invitations") {
+    return { invitations: [] } as T;
+  }
+
+  if (/^\/running-sessions\/[^/]+$/.test(path)) {
+    return {
+      session: {
+        id: "demo-session",
+        title: "Remote 5K",
+        type: "group",
+        hostUserId: "demo-user",
+        status: "active",
+        targetDistanceMeters: 5000,
+        locationSharingRequired: true,
+        voiceFeedbackEnabled: true,
+        visibility: "invited_only",
+        createdAt: new Date().toISOString(),
+      },
+      participants: [],
+      participantSummaries: [
+        {
+          participantId: "demo-participant",
+          userId: "demo-user",
+          nickname: "Demo Runner",
+          runnerId: "demo_runner",
+          isHost: true,
+          status: "running",
+          totalDistanceMeters: 0,
+          movingTimeSeconds: 0,
+        },
+      ],
+    } as T;
+  }
+
+  if (/^\/running-sessions\/[^/]+\/locations\/latest$/.test(path)) {
+    return { locations: [] } as T;
+  }
+
   return undefined;
 }
 
@@ -214,5 +316,35 @@ function getDemoFriends(): FriendSummaryDto[] {
     { id: "friend-1", nickname: "Minsu", status: "running", currentPace: "5:48" },
     { id: "friend-2", nickname: "Jihyun", status: "online" },
     { id: "friend-3", nickname: "Seoyeon", status: "offline" },
+  ];
+}
+
+function getDemoActivities(): ActivityRecord[] {
+  const now = new Date();
+  return [
+    {
+      id: "demo-activity-1",
+      userId: "demo-user",
+      sessionId: "demo-session-1",
+      distanceMeters: 5000,
+      durationSeconds: 1810,
+      movingTimeSeconds: 1810,
+      averagePaceSecPerKm: 362,
+      routePolyline: "",
+      visibility: "friends",
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "demo-activity-2",
+      userId: "demo-user",
+      sessionId: "demo-session-2",
+      distanceMeters: 3200,
+      durationSeconds: 1180,
+      movingTimeSeconds: 1180,
+      averagePaceSecPerKm: 369,
+      routePolyline: "",
+      visibility: "friends",
+      createdAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    },
   ];
 }

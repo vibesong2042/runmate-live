@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import type { LoginProfile } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { RUNTIME_ENV, getApiTargetLabel } from "../config/runtime";
 
 export function OnboardingScreen({
   error,
@@ -75,6 +76,9 @@ export function OnboardingScreen({
       </View>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Text style={styles.connectionHint}>
+        API target: {getApiTargetLabel()} - env {RUNTIME_ENV}
+      </Text>
       <PrimaryButton
         disabled={!canSubmit}
         label={isLoading ? "Signing In..." : "Get Started"}
@@ -155,5 +159,11 @@ const styles = StyleSheet.create({
     color: "#dc2626",
     fontSize: 14,
     fontWeight: "700",
+  },
+  connectionHint: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
   },
 });

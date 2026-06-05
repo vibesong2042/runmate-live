@@ -6,6 +6,9 @@ build/
 .env
 .env.*
 !.env.example
+!apps/api/.env.preview.example
+!apps/mobile/.env.external.example
+!apps/mobile/.env.local.example
 coverage/
 *.log
 *.tsbuildinfo

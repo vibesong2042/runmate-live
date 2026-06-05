@@ -56,6 +56,10 @@ function parseMessage(raw: unknown): ClientRealtimeEvent | undefined {
 }
 
 async function handleLocationUpdate(userId: string, event: LocationUpdateEvent): Promise<void> {
+  if (!(await isSessionParticipant(event.sessionId, userId))) {
+    return;
+  }
+
   const now = new Date().toISOString();
   await store.upsertLiveLocation({
     id: randomUUID(),
@@ -87,7 +91,11 @@ async function handleLocationUpdate(userId: string, event: LocationUpdateEvent):
   broadcastToSession(event.sessionId, outbound);
 }
 
-function handleCheer(userId: string, event: CheerSendEvent): void {
+async function handleCheer(userId: string, event: CheerSendEvent): Promise<void> {
+  if (!(await isSessionParticipant(event.sessionId, userId))) {
+    return;
+  }
+
   broadcastToSession(event.sessionId, {
     type: "cheer:received",
     sessionId: event.sessionId,
@@ -99,6 +107,11 @@ function handleCheer(userId: string, event: CheerSendEvent): void {
       sentAt: new Date().toISOString(),
     },
   });
+}
+
+async function isSessionParticipant(sessionId: string, userId: string): Promise<boolean> {
+  const participants = await store.getSessionParticipants(sessionId);
+  return participants.some((participant) => participant.userId === userId);
 }
 
 export async function registerLiveRunGateway(app: FastifyInstance): Promise<void> {
@@ -143,7 +156,7 @@ export async function registerLiveRunGateway(app: FastifyInstance): Promise<void
       }
 
       if (event.type === "cheer:send") {
-        handleCheer(connection.userId, event);
+        void handleCheer(connection.userId, event);
       }
     });
 

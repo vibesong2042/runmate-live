@@ -1,20 +1,62 @@
-import React, { useState } from "react";
-import { StyleSheet, Switch, Text, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 import type { RunningSession, RunningSessionParticipant } from "@runmate/shared";
+import type { FriendSummaryDto } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { demoFriends } from "../state/app-state";
 
 interface RunSetupScreenProps {
   accessToken?: string;
+  authenticatedGet: <T>(path: string) => Promise<T>;
   authenticatedPost: <T>(path: string, body?: unknown) => Promise<T>;
   onStart: (sessionId: string) => void;
   onCancel: () => void;
 }
 
-export function RunSetupScreen({ accessToken, authenticatedPost, onStart, onCancel }: RunSetupScreenProps) {
+export function RunSetupScreen({ accessToken, authenticatedGet, authenticatedPost, onStart, onCancel }: RunSetupScreenProps) {
   const [shareLocation, setShareLocation] = useState(true);
   const [voice, setVoice] = useState(true);
+  const [friends, setFriends] = useState<FriendSummaryDto[]>([]);
+  const [selectedFriendIds, setSelectedFriendIds] = useState<Set<string>>(new Set());
+  const [friendStatus, setFriendStatus] = useState("Loading friends...");
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let isMounted = true;
+    authenticatedGet<{ friends?: FriendSummaryDto[] }>("/friends")
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+        const serverFriends = response.friends ?? [];
+        setFriends(serverFriends);
+        setSelectedFriendIds(new Set(serverFriends.map((friend) => friend.id)));
+        setFriendStatus(serverFriends.length ? "Friends selected for this run" : "No friends connected yet");
+      })
+      .catch(() => {
+        if (isMounted) {
+          setFriends(demoFriends);
+          setSelectedFriendIds(new Set(demoFriends.map((friend) => friend.id)));
+          setFriendStatus("API unavailable - showing demo friends");
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [authenticatedGet]);
+
+  function toggleFriend(friendId: string) {
+    setSelectedFriendIds((current) => {
+      const next = new Set(current);
+      if (next.has(friendId)) {
+        next.delete(friendId);
+      } else {
+        next.add(friendId);
+      }
+      return next;
+    });
+  }
 
   async function createAndStartSession() {
     setIsStarting(true);
@@ -31,7 +73,7 @@ export function RunSetupScreen({ accessToken, authenticatedPost, onStart, onCanc
         title: "Remote 5K",
         type: "group",
         targetDistanceMeters: 5000,
-        friendUserIds: [],
+        friendUserIds: [...selectedFriendIds],
         locationSharingRequired: shareLocation,
         voiceFeedbackEnabled: voice,
       });
@@ -45,7 +87,7 @@ export function RunSetupScreen({ accessToken, authenticatedPost, onStart, onCanc
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Run Setup</Text>
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Remote 5K</Text>
@@ -62,26 +104,47 @@ export function RunSetupScreen({ accessToken, authenticatedPost, onStart, onCanc
 
       <View style={styles.participants}>
         <Text style={styles.sectionTitle}>Participants</Text>
+        <Text style={styles.friendStatus}>{friendStatus}</Text>
         <Text style={styles.ready}>You - ready</Text>
-        <Text style={styles.ready}>Minsu - ready</Text>
-        <Text style={styles.waiting}>Jihyun - waiting</Text>
+        {friends.map((friend) => {
+          const selected = selectedFriendIds.has(friend.id);
+          return (
+            <TouchableOpacity
+              accessibilityRole="button"
+              key={friend.id}
+              onPress={() => toggleFriend(friend.id)}
+              style={[styles.friendRow, selected && styles.friendRowSelected]}
+            >
+              <View style={styles.friendCopy}>
+                <Text style={styles.friendName}>{friend.nickname}</Text>
+                <Text style={styles.friendMeta}>
+                  {friend.runnerId ? `@${friend.runnerId} - ` : ""}
+                  {selected ? "invited" : "not invited"}
+                </Text>
+              </View>
+              <Text style={[styles.selectionState, selected && styles.selectionStateSelected]}>
+                {selected ? "Selected" : "Tap to add"}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <View style={styles.actions}>
-        <PrimaryButton label={isStarting ? "Starting..." : "Start"} onPress={createAndStartSession} />
+        <PrimaryButton disabled={isStarting} label={isStarting ? "Starting..." : "Start"} onPress={createAndStartSession} />
         <PrimaryButton label="Cancel" variant="secondary" onPress={onCancel} />
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
     padding: 20,
     gap: 18,
+    flexGrow: 1,
   },
   title: {
     color: "#0f172a",
@@ -129,10 +192,47 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
-  waiting: {
-    color: "#f97316",
-    fontSize: 15,
+  friendStatus: {
+    color: "#64748b",
+    fontSize: 13,
     fontWeight: "700",
+  },
+  friendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#ffffff",
+    padding: 14,
+  },
+  friendRowSelected: {
+    borderColor: "#0f766e",
+    backgroundColor: "#ecfdf5",
+  },
+  friendCopy: {
+    flex: 1,
+  },
+  friendName: {
+    color: "#0f172a",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  friendMeta: {
+    marginTop: 3,
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  selectionState: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  selectionStateSelected: {
+    color: "#0f766e",
   },
   error: {
     color: "#dc2626",

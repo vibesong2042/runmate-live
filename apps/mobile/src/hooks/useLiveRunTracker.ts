@@ -5,10 +5,13 @@ import {
   calculateCurrentPaceSecPerKm,
   haversineDistanceMeters,
   shouldAcceptLocation,
+  type CheerSendEvent,
+  type ClientRealtimeEvent,
   type GeoPoint,
   type PaceSample,
+  type ServerRealtimeEvent,
 } from "@runmate/shared";
-import { LiveRunSocket } from "../api/live-run-socket";
+import { LiveRunSocket, type LiveRunSocketStatus } from "../api/live-run-socket";
 
 interface UseLiveRunTrackerOptions {
   sessionId: string;
@@ -18,7 +21,10 @@ interface UseLiveRunTrackerOptions {
 
 export interface LiveRunTrackerState {
   permissionStatus: "unknown" | "granted" | "denied";
-  syncStatus: "idle" | "demo" | "connecting" | "open" | "closed" | "error";
+  syncStatus: "idle" | "demo" | LiveRunSocketStatus;
+  syncMessage?: string;
+  pendingLocationUpdates: number;
+  lastSyncedAt?: string;
   isTracking: boolean;
   elapsedSeconds: number;
   distanceMeters: number;
@@ -28,7 +34,36 @@ export interface LiveRunTrackerState {
   latitude?: number;
   longitude?: number;
   lastLocationAt?: string;
+  remoteLocations: Record<string, RemoteParticipantLocation>;
+  participantStatuses: Record<string, RemoteParticipantStatus>;
+  receivedCheers: ReceivedCheer[];
+  sentCheers: number;
+  latestCheer?: ReceivedCheer;
   error?: string;
+}
+
+export interface RemoteParticipantLocation {
+  userId: string;
+  latitude: number;
+  longitude: number;
+  distanceMeters: number;
+  state: "running" | "paused" | "finished" | "lost_signal";
+  currentPaceSecPerKm?: number;
+  averagePaceSecPerKm?: number;
+  lastUpdatedAt: string;
+}
+
+export interface RemoteParticipantStatus {
+  status: "joined" | "ready" | "running" | "paused" | "finished" | "lost_signal";
+  updatedAt: string;
+}
+
+export interface ReceivedCheer {
+  id: string;
+  fromUserId: string;
+  targetUserId: string;
+  cheerCode: CheerSendEvent["payload"]["cheerCode"];
+  sentAt: string;
 }
 
 const LOCATION_OPTIONS: Location.LocationOptions = {
@@ -44,6 +79,11 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
     isTracking: false,
     elapsedSeconds: 0,
     distanceMeters: 0,
+    remoteLocations: {},
+    participantStatuses: {},
+    receivedCheers: [],
+    sentCheers: 0,
+    pendingLocationUpdates: 0,
   });
   const startedAtRef = useRef<number | undefined>(undefined);
   const previousPointRef = useRef<GeoPoint | undefined>(undefined);
@@ -52,6 +92,78 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
   const subscriptionRef = useRef<Location.LocationSubscription | undefined>(undefined);
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const socketRef = useRef<LiveRunSocket | undefined>(undefined);
+  const pendingLocationRef = useRef<ClientRealtimeEvent | undefined>(undefined);
+
+  const flushPendingLocation = useCallback(() => {
+    const pending = pendingLocationRef.current;
+    if (!pending || !socketRef.current?.send(pending)) {
+      return;
+    }
+
+    pendingLocationRef.current = undefined;
+    setState((current) => ({
+      ...current,
+      lastSyncedAt: new Date().toISOString(),
+      pendingLocationUpdates: 0,
+      syncMessage: "Latest route point synced after reconnect",
+    }));
+  }, []);
+
+  const handleRealtimeEvent = useCallback(
+    (event: ServerRealtimeEvent) => {
+      if (event.sessionId !== sessionId) {
+        return;
+      }
+
+      if (event.type === "participant:location" && event.userId !== userId) {
+        setState((current) => ({
+          ...current,
+          remoteLocations: {
+            ...current.remoteLocations,
+            [event.userId]: {
+              userId: event.userId,
+              latitude: event.payload.latitude,
+              longitude: event.payload.longitude,
+              distanceMeters: event.payload.distanceMeters,
+              state: event.payload.state,
+              currentPaceSecPerKm: event.payload.currentPaceSecPerKm,
+              averagePaceSecPerKm: event.payload.averagePaceSecPerKm,
+              lastUpdatedAt: event.payload.lastUpdatedAt,
+            },
+          },
+        }));
+      }
+
+      if (event.type === "participant:status") {
+        setState((current) => ({
+          ...current,
+          participantStatuses: {
+            ...current.participantStatuses,
+            [event.userId]: {
+              status: event.payload.status,
+              updatedAt: event.payload.updatedAt,
+            },
+          },
+        }));
+      }
+
+      if (event.type === "cheer:received" && event.payload.targetUserId === userId) {
+        const cheer: ReceivedCheer = {
+          id: `${event.payload.fromUserId}-${event.payload.sentAt}-${event.payload.cheerCode}`,
+          fromUserId: event.payload.fromUserId,
+          targetUserId: event.payload.targetUserId,
+          cheerCode: event.payload.cheerCode,
+          sentAt: event.payload.sentAt,
+        };
+        setState((current) => ({
+          ...current,
+          latestCheer: cheer,
+          receivedCheers: [cheer, ...current.receivedCheers].slice(0, 20),
+        }));
+      }
+    },
+    [sessionId, userId],
+  );
 
   const stop = useCallback(() => {
     subscriptionRef.current?.remove();
@@ -80,6 +192,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
     previousPointRef.current = undefined;
     distanceRef.current = 0;
     samplesRef.current = [];
+    pendingLocationRef.current = undefined;
     if (accessToken === "demo-access-token") {
       socketRef.current = undefined;
     } else {
@@ -87,9 +200,17 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       socketRef.current.connect({
         accessToken,
         sessionId,
-        onEvent: () => undefined,
-        onStatus: (syncStatus) => {
-          setState((current) => ({ ...current, syncStatus }));
+        onEvent: handleRealtimeEvent,
+        onStatus: (update) => {
+          setState((current) => ({
+            ...current,
+            syncStatus: update.status,
+            syncMessage: update.message,
+            pendingLocationUpdates: pendingLocationRef.current ? 1 : 0,
+          }));
+          if (update.status === "open") {
+            flushPendingLocation();
+          }
         },
       });
     }
@@ -100,6 +221,13 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       isTracking: true,
       elapsedSeconds: 0,
       distanceMeters: 0,
+      remoteLocations: {},
+      participantStatuses: {},
+      receivedCheers: [],
+      sentCheers: 0,
+      pendingLocationUpdates: 0,
+      syncMessage: accessToken === "demo-access-token" ? "Demo mode is local only" : "Opening live sync",
+      latestCheer: undefined,
     });
 
     timerRef.current = setInterval(() => {
@@ -140,7 +268,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       const averagePaceSecPerKm = calculateAveragePaceSecPerKm(distanceRef.current, elapsedSeconds);
       const distanceMeters = Math.round(distanceRef.current);
 
-      socketRef.current?.send({
+      const locationEvent: ClientRealtimeEvent = {
         type: "location:update",
         sessionId,
         payload: {
@@ -156,7 +284,11 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
           state: "running",
           recordedAt,
         },
-      });
+      };
+      const locationSent = accessToken === "demo-access-token" ? true : socketRef.current?.send(locationEvent) === true;
+      if (!locationSent) {
+        pendingLocationRef.current = locationEvent;
+      }
 
       setState((current) => ({
         ...current,
@@ -168,18 +300,52 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
         latitude: nextPoint.latitude,
         longitude: nextPoint.longitude,
         lastLocationAt: recordedAt,
+        lastSyncedAt: locationSent ? recordedAt : current.lastSyncedAt,
+        pendingLocationUpdates: pendingLocationRef.current ? 1 : 0,
+        syncMessage: locationSent
+          ? current.syncMessage
+          : "Latest route point is saved on this phone until live sync reconnects",
       }));
     });
-  }, [accessToken, sessionId, userId]);
+  }, [accessToken, flushPendingLocation, handleRealtimeEvent, sessionId]);
+
+  const sendCheer = useCallback(
+    (targetUserId: string, cheerCode: CheerSendEvent["payload"]["cheerCode"] = "nice") => {
+      if (accessToken === "demo-access-token") {
+        setState((current) => ({ ...current, sentCheers: current.sentCheers + 1 }));
+        return true;
+      }
+
+      const sent = socketRef.current?.send({
+        type: "cheer:send",
+        sessionId,
+        payload: {
+          targetUserId,
+          cheerCode,
+        },
+      });
+      if (sent) {
+        setState((current) => ({ ...current, sentCheers: current.sentCheers + 1 }));
+      } else {
+        setState((current) => ({
+          ...current,
+          syncMessage: "Cheer was not sent because live sync is reconnecting",
+        }));
+      }
+      return Boolean(sent);
+    },
+    [accessToken, sessionId],
+  );
 
   useEffect(() => stop, [stop]);
 
   return useMemo(
     () => ({
       ...state,
+      sendCheer,
       start,
       stop,
     }),
-    [start, state, stop],
+    [sendCheer, start, state, stop],
   );
 }

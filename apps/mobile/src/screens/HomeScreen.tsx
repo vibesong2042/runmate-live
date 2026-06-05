@@ -1,10 +1,72 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import type { ActivitiesResponseDto, RunningSessionInvitationsDto, RunningSessionResponseDto } from "../api/client";
 import { MetricTile } from "../components/MetricTile";
 import { PrimaryButton } from "../components/PrimaryButton";
 import type { AppScreen } from "../state/app-state";
 
-export function HomeScreen({ onNavigate }: { onNavigate: (screen: AppScreen) => void }) {
+interface HomeScreenProps {
+  authenticatedGet: <T>(path: string) => Promise<T>;
+  onJoinSession: (sessionId: string) => void;
+  onNavigate: (screen: AppScreen) => void;
+}
+
+export function HomeScreen({ authenticatedGet, onJoinSession, onNavigate }: HomeScreenProps) {
+  const [invitations, setInvitations] = useState<RunningSessionResponseDto[]>([]);
+  const [weeklyDistanceMeters, setWeeklyDistanceMeters] = useState(0);
+  const [activityCount, setActivityCount] = useState(0);
+  const [status, setStatus] = useState("Checking invited runs...");
+  const [activityStatus, setActivityStatus] = useState("Loading activity summary...");
+
+  useEffect(() => {
+    let isMounted = true;
+    authenticatedGet<RunningSessionInvitationsDto>("/running-sessions/invitations")
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+        setInvitations(response.invitations);
+        setStatus(response.invitations.length ? "Invited runs ready" : "No invited runs yet");
+      })
+      .catch(() => {
+        if (isMounted) {
+          setInvitations([]);
+          setStatus("Invited runs unavailable");
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [authenticatedGet]);
+
+  useEffect(() => {
+    let isMounted = true;
+    authenticatedGet<ActivitiesResponseDto>("/activities")
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+        const now = Date.now();
+        const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+        const weeklyActivities = response.activities.filter((activity) => Date.parse(activity.createdAt) >= sevenDaysAgo);
+        setWeeklyDistanceMeters(
+          weeklyActivities.reduce((total, activity) => total + activity.distanceMeters, 0),
+        );
+        setActivityCount(response.activities.length);
+        setActivityStatus(response.activities.length ? "Activity summary synced" : "No completed runs yet");
+      })
+      .catch(() => {
+        if (isMounted) {
+          setWeeklyDistanceMeters(0);
+          setActivityCount(0);
+          setActivityStatus("Activity summary unavailable");
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [authenticatedGet]);
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View>
@@ -13,9 +75,10 @@ export function HomeScreen({ onNavigate }: { onNavigate: (screen: AppScreen) => 
       </View>
 
       <View style={styles.metricsRow}>
-        <MetricTile label="This Week" value="12.4 km" tone="strong" />
-        <MetricTile label="Group Runs" value="3" />
+        <MetricTile label="This Week" value={`${(weeklyDistanceMeters / 1000).toFixed(1)} km`} tone="strong" />
+        <MetricTile label="Runs" value={`${activityCount}`} />
       </View>
+      <Text style={styles.statusText}>{activityStatus}</Text>
 
       <View style={styles.actions}>
         <PrimaryButton label="Run With Friends" onPress={() => onNavigate("runSetup")} />
@@ -23,11 +86,22 @@ export function HomeScreen({ onNavigate }: { onNavigate: (screen: AppScreen) => 
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Live Friends</Text>
-        <View style={styles.friendRun}>
-          <Text style={styles.friendName}>Minsu</Text>
-          <Text style={styles.friendMeta}>3.2 km - 5:48/km - running now</Text>
-        </View>
+        <Text style={styles.sectionTitle}>Invited Runs</Text>
+        <Text style={styles.statusText}>{status}</Text>
+        {invitations.map((invitation) => {
+          const host = invitation.participantSummaries?.find((participant) => participant.isHost);
+          return (
+            <View key={invitation.session.id} style={styles.friendRun}>
+              <View style={styles.inviteCopy}>
+                <Text style={styles.friendName}>{invitation.session.title}</Text>
+                <Text style={styles.friendMeta}>
+                  Host {host?.nickname ?? "Runner"} - {invitation.session.status}
+                </Text>
+              </View>
+              <PrimaryButton label="Join" variant="secondary" onPress={() => onJoinSession(invitation.session.id)} />
+            </View>
+          );
+        })}
       </View>
     </ScrollView>
   );
@@ -66,11 +140,18 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   friendRun: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e2e8f0",
     backgroundColor: "#ffffff",
     padding: 16,
+  },
+  inviteCopy: {
+    flex: 1,
   },
   friendName: {
     color: "#0f172a",
@@ -81,5 +162,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     color: "#64748b",
     fontSize: 14,
+  },
+  statusText: {
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

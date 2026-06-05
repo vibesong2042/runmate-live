@@ -45,6 +45,20 @@ npm.cmd run dev:api
 npm.cmd run dev:mobile
 ```
 
+For a phone on the same Wi-Fi, use:
+
+```bash
+npm.cmd run dev:mobile:lan
+```
+
+For friends testing from another Wi-Fi or mobile data, use Expo tunnel mode and a public API/WSS URL:
+
+```bash
+npm.cmd run dev:mobile:tunnel
+```
+
+See [docs/EXTERNAL_BETA_TESTING.md](docs/EXTERNAL_BETA_TESTING.md) for the full outside-network test checklist.
+
 ## Mobile Map Check
 
 The live run screen now uses `react-native-maps`. To see it properly, run the app on a real phone or mobile simulator through Expo. The web target may not render the native map the same way.

@@ -24,6 +24,14 @@ export async function registerLocationRoutes(app: FastifyInstance): Promise<void
     const currentUser = getCurrentUser(request);
     const params = request.params as { sessionId: string };
     const input = locationSchema.parse(request.body);
+    const session = await store.getSession(params.sessionId);
+    if (!session) {
+      return reply.code(404).send({ message: "Session not found" });
+    }
+    const participants = await store.getSessionParticipants(params.sessionId);
+    if (!participants.some((participant) => participant.userId === currentUser.id)) {
+      return reply.code(403).send({ message: "You are not a participant in this running session" });
+    }
     const receivedAt = new Date().toISOString();
     const location = {
       id: randomUUID(),
@@ -45,8 +53,17 @@ export async function registerLocationRoutes(app: FastifyInstance): Promise<void
     return reply.code(201).send({ location });
   });
 
-  app.get("/running-sessions/:sessionId/locations/latest", async (request) => {
+  app.get("/running-sessions/:sessionId/locations/latest", async (request, reply) => {
+    const currentUser = getCurrentUser(request);
     const params = request.params as { sessionId: string };
+    const session = await store.getSession(params.sessionId);
+    if (!session) {
+      return reply.code(404).send({ message: "Session not found" });
+    }
+    const participants = await store.getSessionParticipants(params.sessionId);
+    if (!participants.some((participant) => participant.userId === currentUser.id)) {
+      return reply.code(403).send({ message: "You are not a participant in this running session" });
+    }
     const latest = await store.listLatestLocations(params.sessionId);
     return { locations: latest };
   });

@@ -4,6 +4,9 @@ import { PgStore } from "./pg-store.js";
 import type { RunMateStore } from "./store-types.js";
 
 const config = loadConfig();
+const defaultStoreFile =
+  process.env.RUNMATE_STORE_FILE ??
+  (process.env.npm_lifecycle_event === "test" ? undefined : ".runlogs/runmate-store.json");
 
 export const store: RunMateStore =
-  process.env.STORE_DRIVER === "postgres" ? new PgStore(config.databaseUrl) : new InMemoryStore();
+  config.storeDriver === "postgres" ? new PgStore(config.databaseUrl) : new InMemoryStore(defaultStoreFile);

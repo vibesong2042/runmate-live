@@ -1,10 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
-import { loadConfig } from "../config.js";
+import { assertDeploySafeConfig, loadConfig } from "../config.js";
 
 const { Pool } = pg;
 const config = loadConfig();
+assertDeploySafeConfig(config);
 const pool = new Pool({ connectionString: config.databaseUrl });
 
 async function migrate(): Promise<void> {

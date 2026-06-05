@@ -10,6 +10,10 @@
   "scripts": {
     "dev:api": "npm --workspace @runmate/api run dev",
     "dev:mobile": "npm --workspace @runmate/mobile run dev",
+    "dev:mobile:lan": "npm --workspace @runmate/mobile run dev:lan",
+    "dev:mobile:tunnel": "npm --workspace @runmate/mobile run dev:tunnel",
+    "dev:external": "powershell -ExecutionPolicy Bypass -File scripts/start-external-test.ps1",
+    "check:beta-api": "node scripts/check-beta-api.mjs",
     "db:migrate": "npm --workspace @runmate/api run db:migrate",
     "build": "npm --workspaces run build",
     "typecheck": "npm --workspaces run typecheck",
