@@ -133,7 +133,7 @@ Use this when you want repeated tests without keeping this PC as the server.
    npm.cmd run dev:mobile:tunnel
    ```
 
-For a later installable Android preview build, use the `preview` profile in `eas.json` after Expo/EAS login and project setup.
+For a later installable Android preview build, use the `preview` profile in `apps/mobile/eas.json` after Expo/EAS login and project setup.
 
 ## One-command external test
 

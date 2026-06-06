@@ -1,6 +1,7 @@
 {
   "expo": {
     "name": "RunMate Live",
+    "owner": "papasong",
     "slug": "runmate-live",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -14,6 +15,7 @@
       }
     },
     "android": {
+      "package": "com.papasong.runmatelive",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
@@ -22,6 +24,11 @@
     },
     "plugins": [
       "expo-asset"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8c420a52-8c31-4f6b-8865-cfe74d6dd970"
+      }
+    }
   }
 }

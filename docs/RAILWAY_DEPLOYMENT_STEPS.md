@@ -119,7 +119,8 @@ For EAS Build, add the same values to the EAS `preview` environment.
 Then build Android preview:
 
 ```powershell
-eas build --profile preview --platform android
+cd apps/mobile
+npx.cmd eas-cli build --profile preview --platform android
 ```
 
 After this, testers install the APK. They should not need Expo Go or an `exp://` URL.

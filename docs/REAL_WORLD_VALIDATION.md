@@ -36,7 +36,6 @@ You need:
 ```text
 RUNMATE_ENV=preview
 API_HOST=0.0.0.0
-API_PORT=4000
 STORE_DRIVER=postgres
 REQUIRE_AUTH=true
 DATABASE_URL=postgres://USER:PASSWORD@HOST:PORT/DATABASE
@@ -117,7 +116,8 @@ EXPO_PUBLIC_ENABLE_DEMO_FALLBACK=false
 Then build:
 
 ```powershell
-eas build --profile preview --platform android
+cd apps/mobile
+npx.cmd eas-cli build --profile preview --platform android
 ```
 
 The preview APK should be shared with testers. They should not need to type an `exp://` URL.
