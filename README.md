@@ -12,7 +12,7 @@ Remote live running app MVP.
 - Expo React Native screen skeletons for onboarding, home, friends, run setup, live run, result, profile, and settings
 - Expo foreground GPS tracking hook wired into the live running screen
 - Mobile auth flow obtains a development JWT, then uses Bearer auth for session creation, run start, run finish, and WebSocket live tracking
-- Live run screen renders a native map with the runner marker and local route polyline via `react-native-maps`
+- Live run screen tracks route, pace, and live sync; native maps can be enabled with `EXPO_PUBLIC_ENABLE_NATIVE_MAP=true`
 - PostgreSQL/PostGIS schema migration for the MVP domain
 
 ## Prerequisites
@@ -61,7 +61,7 @@ See [docs/EXTERNAL_BETA_TESTING.md](docs/EXTERNAL_BETA_TESTING.md) for the full 
 
 ## Mobile Map Check
 
-The live run screen now uses `react-native-maps`. To see it properly, run the app on a real phone or mobile simulator through Expo. The web target may not render the native map the same way.
+The live run screen can use `react-native-maps` when `EXPO_PUBLIC_ENABLE_NATIVE_MAP=true`. Preview beta builds keep native maps off by default so live tracking can be tested safely before an Android Google Maps API key is configured.
 
 For a real group running test:
 

@@ -11,7 +11,8 @@
         "EXPO_PUBLIC_RUNTIME_ENV": "preview",
         "EXPO_PUBLIC_API_URL": "https://runningmate-live-production.up.railway.app",
         "EXPO_PUBLIC_WS_URL": "wss://runningmate-live-production.up.railway.app/ws",
-        "EXPO_PUBLIC_ENABLE_DEMO_FALLBACK": "false"
+        "EXPO_PUBLIC_ENABLE_DEMO_FALLBACK": "false",
+        "EXPO_PUBLIC_ENABLE_NATIVE_MAP": "false"
       },
       "android": {
         "buildType": "apk"

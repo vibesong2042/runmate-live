@@ -4,6 +4,7 @@ export const RUNTIME_ENV = process.env.EXPO_PUBLIC_RUNTIME_ENV ?? "development";
 export const API_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL ?? DEFAULT_API_URL);
 export const WS_URL = normalizeWebSocketUrl(process.env.EXPO_PUBLIC_WS_URL, API_URL);
 export const ENABLE_DEMO_FALLBACK = process.env.EXPO_PUBLIC_ENABLE_DEMO_FALLBACK === "true";
+export const ENABLE_NATIVE_MAP = process.env.EXPO_PUBLIC_ENABLE_NATIVE_MAP === "true";
 
 export type NetworkScope = "local-device" | "private-lan" | "public" | "unknown";
 

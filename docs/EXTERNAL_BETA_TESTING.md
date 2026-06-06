@@ -50,6 +50,7 @@ Use this when you want to test with a friend today and can keep this PC turned o
    EXPO_PUBLIC_API_URL=https://example-public-host.trycloudflare.com
    EXPO_PUBLIC_WS_URL=wss://example-public-host.trycloudflare.com/ws
    EXPO_PUBLIC_ENABLE_DEMO_FALLBACK=false
+   EXPO_PUBLIC_ENABLE_NATIVE_MAP=false
    ```
 
 5. Start Expo in tunnel mode.
@@ -78,7 +79,7 @@ Limitations:
 
 - This PC must stay awake.
 - The tunnel URL can change when restarted.
-- Live reload and maps may feel slower than LAN mode.
+- Live reload may feel slower than LAN mode. Preview builds keep native maps disabled unless a Google Maps key is configured.
 
 ## Option B: stable beta server
 
@@ -125,6 +126,7 @@ Use this when you want repeated tests without keeping this PC as the server.
    EXPO_PUBLIC_API_URL=https://YOUR_PUBLIC_API_HOST
    EXPO_PUBLIC_WS_URL=wss://YOUR_PUBLIC_API_HOST/ws
    EXPO_PUBLIC_ENABLE_DEMO_FALLBACK=false
+   EXPO_PUBLIC_ENABLE_NATIVE_MAP=false
    ```
 
 7. Start Expo tunnel mode for Expo Go testing:
