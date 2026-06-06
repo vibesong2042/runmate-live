@@ -44,6 +44,8 @@ In the same Railway project:
 
 Railway will provide a `DATABASE_URL` variable from the PostgreSQL service.
 
+RunMate's MVP schema uses plain `latitude` and `longitude` numeric columns for live locations. It does not require the PostGIS extension, so Railway's default PostgreSQL service is enough.
+
 ## Step 4: set API service variables
 
 Open the API service, then go to `Variables`.

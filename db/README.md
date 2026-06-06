@@ -1,6 +1,6 @@
 # Database
 
-The MVP database uses PostgreSQL with PostGIS.
+The MVP database uses standard PostgreSQL.
 
 ## Local setup
 
@@ -11,6 +11,6 @@ psql "postgres://runmate:runmate@localhost:5432/runmate" -f db/migrations/001_in
 
 ## Notes
 
-- `live_locations.position` stores a PostGIS geography point for route and proximity queries.
-- The app also stores raw `latitude` and `longitude` columns to keep API serialization simple.
+- `live_locations` stores raw `latitude` and `longitude` columns for live route sharing.
+- The MVP does not require PostGIS. Add a separate migration later if server-side proximity or spatial queries become necessary.
 - Detailed route visibility should default to private/friends-only at the API layer, even when an activity summary is shared.

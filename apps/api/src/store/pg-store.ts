@@ -399,9 +399,9 @@ export class PgStore implements RunMateStore {
   async upsertLiveLocation(location: LiveLocation): Promise<void> {
     await this.pool.query(
       `INSERT INTO live_locations
-       (id, session_id, user_id, position, latitude, longitude, altitude, accuracy_meters, heading,
+       (id, session_id, user_id, latitude, longitude, altitude, accuracy_meters, heading,
         speed_mps, current_pace_sec_per_km, average_pace_sec_per_km, distance_meters, state, recorded_at, received_at)
-       VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($5, $4), 4326)::geography, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         location.id,
         location.sessionId,

@@ -1,4 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TYPE auth_provider AS ENUM ('email', 'apple', 'google');
@@ -91,7 +90,6 @@ CREATE TABLE live_locations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id uuid NOT NULL REFERENCES running_sessions(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  position geography(Point, 4326) NOT NULL,
   latitude double precision NOT NULL CHECK (latitude BETWEEN -90 AND 90),
   longitude double precision NOT NULL CHECK (longitude BETWEEN -180 AND 180),
   altitude numeric(10, 2),
@@ -108,9 +106,6 @@ CREATE TABLE live_locations (
 
 CREATE INDEX live_locations_session_user_recorded_idx
 ON live_locations (session_id, user_id, recorded_at DESC);
-
-CREATE INDEX live_locations_position_idx
-ON live_locations USING gist (position);
 
 CREATE TABLE activity_records (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
