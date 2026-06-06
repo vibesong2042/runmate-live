@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 import type { RunningSession, RunningSessionParticipant } from "@runmate/shared";
-import type { FriendSummaryDto } from "../api/client";
+import { ApiError, type FriendSummaryDto } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
 
 interface RunSetupScreenProps {
@@ -78,8 +78,8 @@ export function RunSetupScreen({ accessToken, authenticatedGet, authenticatedPos
       });
       await authenticatedPost(`/running-sessions/${created.session.id}/start`, {});
       onStart(created.session.id);
-    } catch {
-      setError("Could not start the running session.");
+    } catch (error) {
+      setError(getRunStartErrorMessage(error));
     } finally {
       setIsStarting(false);
     }
@@ -137,6 +137,25 @@ export function RunSetupScreen({ accessToken, authenticatedGet, authenticatedPos
       </View>
     </ScrollView>
   );
+}
+
+function getRunStartErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return "Could not start the running session. Try again.";
+  }
+  if (error.status === 0) {
+    return "API connection failed. Check your internet connection.";
+  }
+  if (error.status === 401) {
+    return "Sign-in expired. Reopen the app and sign in again.";
+  }
+  if (error.status === 403) {
+    return error.message || "Only accepted friends can be invited to this run.";
+  }
+  if (error.status >= 500) {
+    return "Server error while starting the run. Try again in a moment.";
+  }
+  return error.message || "Could not start the running session.";
 }
 
 const styles = StyleSheet.create({

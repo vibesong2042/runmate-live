@@ -433,7 +433,7 @@ export class PgStore implements RunMateStore {
   ): Promise<RunningSessionParticipant | undefined> {
     const result = await this.pool.query(
       `UPDATE running_session_participants
-       SET status = $3,
+       SET status = $3::participant_status,
            started_at = CASE
              WHEN $3 IN ('joined', 'ready', 'running') AND started_at IS NULL THEN now()
              ELSE started_at
@@ -453,7 +453,7 @@ export class PgStore implements RunMateStore {
   ): Promise<RunningSession | undefined> {
     const result = await this.pool.query(
       `UPDATE running_sessions
-       SET status = $2,
+       SET status = $2::session_status,
            started_at = CASE WHEN $2 = 'active' THEN $3 ELSE started_at END,
            ended_at = CASE WHEN $2 = 'finished' THEN $3 ELSE ended_at END
        WHERE id = $1
