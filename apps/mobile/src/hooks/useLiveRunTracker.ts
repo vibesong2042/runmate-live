@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import {
+  assessLocationForRunning,
   calculateAveragePaceSecPerKm,
   calculateCurrentPaceSecPerKm,
-  haversineDistanceMeters,
-  shouldAcceptLocation,
   type CheerSendEvent,
   type ClientRealtimeEvent,
   type GeoPoint,
+  type LocationRejectReason,
   type PaceSample,
   type ServerRealtimeEvent,
 } from "@runmate/shared";
@@ -23,6 +23,10 @@ export interface LiveRunTrackerState {
   permissionStatus: "unknown" | "granted" | "denied";
   syncStatus: "idle" | "demo" | LiveRunSocketStatus;
   syncMessage?: string;
+  trackingQuality: TrackingQuality;
+  lastRejectedLocationReason?: LocationRejectReason;
+  acceptedPointCount: number;
+  rejectedPointCount: number;
   pendingLocationUpdates: number;
   lastSyncedAt?: string;
   isTracking: boolean;
@@ -41,6 +45,8 @@ export interface LiveRunTrackerState {
   latestCheer?: ReceivedCheer;
   error?: string;
 }
+
+export type TrackingQuality = "waiting" | "normal" | "weak_gps" | "too_fast" | "paused";
 
 export interface RemoteParticipantLocation {
   userId: string;
@@ -72,6 +78,8 @@ const LOCATION_OPTIONS: Location.LocationOptions = {
   distanceInterval: 5,
 };
 
+const TOO_FAST_ANCHOR_RESET_THRESHOLD = 3;
+
 export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRunTrackerOptions) {
   const [state, setState] = useState<LiveRunTrackerState>({
     permissionStatus: "unknown",
@@ -83,10 +91,14 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
     participantStatuses: {},
     receivedCheers: [],
     sentCheers: 0,
+    trackingQuality: "waiting",
+    acceptedPointCount: 0,
+    rejectedPointCount: 0,
     pendingLocationUpdates: 0,
   });
   const startedAtRef = useRef<number | undefined>(undefined);
-  const previousPointRef = useRef<GeoPoint | undefined>(undefined);
+  const acceptedPointRef = useRef<GeoPoint | undefined>(undefined);
+  const tooFastRejectionStreakRef = useRef(0);
   const distanceRef = useRef(0);
   const samplesRef = useRef<PaceSample[]>([]);
   const subscriptionRef = useRef<Location.LocationSubscription | undefined>(undefined);
@@ -189,7 +201,8 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
     }
 
     startedAtRef.current = Date.now();
-    previousPointRef.current = undefined;
+    acceptedPointRef.current = undefined;
+    tooFastRejectionStreakRef.current = 0;
     distanceRef.current = 0;
     samplesRef.current = [];
     pendingLocationRef.current = undefined;
@@ -225,6 +238,10 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       participantStatuses: {},
       receivedCheers: [],
       sentCheers: 0,
+      trackingQuality: "waiting",
+      lastRejectedLocationReason: undefined,
+      acceptedPointCount: 0,
+      rejectedPointCount: 0,
       pendingLocationUpdates: 0,
       syncMessage: accessToken === "demo-access-token" ? "Demo mode is local only" : "Opening live sync",
       latestCheer: undefined,
@@ -250,11 +267,35 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
         recordedAt,
       };
 
-      const previous = previousPointRef.current;
-      if (previous && shouldAcceptLocation(previous, nextPoint)) {
-        distanceRef.current += haversineDistanceMeters(previous, nextPoint);
+      const previous = acceptedPointRef.current;
+      const assessment = assessLocationForRunning(previous, nextPoint);
+      const acceptedPointIncrement = assessment.accepted ? 1 : 0;
+      const rejectedPointIncrement = assessment.accepted ? 0 : 1;
+      let trackingQuality: TrackingQuality = "normal";
+      let lastRejectedLocationReason: LocationRejectReason | undefined;
+
+      if (assessment.accepted) {
+        distanceRef.current += assessment.distanceMeters ?? 0;
+        acceptedPointRef.current = nextPoint;
+        tooFastRejectionStreakRef.current = 0;
+      } else {
+        lastRejectedLocationReason = assessment.reason;
+        trackingQuality = trackingQualityForRejectReason(assessment.reason);
+
+        if (assessment.reason === "too_fast") {
+          tooFastRejectionStreakRef.current += 1;
+          if (tooFastRejectionStreakRef.current >= TOO_FAST_ANCHOR_RESET_THRESHOLD) {
+            acceptedPointRef.current = nextPoint;
+          }
+        } else {
+          tooFastRejectionStreakRef.current = 0;
+        }
+
+        if (assessment.shouldResetAnchor) {
+          acceptedPointRef.current = nextPoint;
+          tooFastRejectionStreakRef.current = 0;
+        }
       }
-      previousPointRef.current = nextPoint;
 
       const elapsedSeconds = startedAtRef.current
         ? Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1000))
@@ -296,6 +337,10 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
         distanceMeters,
         currentPaceSecPerKm,
         averagePaceSecPerKm,
+        trackingQuality,
+        lastRejectedLocationReason,
+        acceptedPointCount: current.acceptedPointCount + acceptedPointIncrement,
+        rejectedPointCount: current.rejectedPointCount + rejectedPointIncrement,
         accuracyMeters: nextPoint.accuracyMeters,
         latitude: nextPoint.latitude,
         longitude: nextPoint.longitude,
@@ -348,4 +393,17 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
     }),
     [sendCheer, start, state, stop],
   );
+}
+
+function trackingQualityForRejectReason(reason?: LocationRejectReason): TrackingQuality {
+  if (reason === "low_accuracy") {
+    return "weak_gps";
+  }
+  if (reason === "too_fast") {
+    return "too_fast";
+  }
+  if (reason === "stale_or_invalid_time") {
+    return "paused";
+  }
+  return "normal";
 }

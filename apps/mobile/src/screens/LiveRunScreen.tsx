@@ -62,6 +62,10 @@ export function LiveRunScreen({
     }
     return "Waiting for GPS signal";
   }, [tracker.accuracyMeters, tracker.lastLocationAt, tracker.permissionStatus]);
+  const distanceTrackingLabel = useMemo(
+    () => formatDistanceTrackingStatus(tracker.trackingQuality),
+    [tracker.trackingQuality],
+  );
   const syncStatusLabel = useMemo(() => {
     if (tracker.syncStatus === "demo") {
       return "Live sync: demo mode";
@@ -384,7 +388,14 @@ export function LiveRunScreen({
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <LiveRunMap currentPoint={currentPoint} route={route} statusText={mapStatus} />
+      <LiveRunMap
+        acceptedPointCount={tracker.acceptedPointCount}
+        currentPoint={currentPoint}
+        rejectedPointCount={tracker.rejectedPointCount}
+        route={route}
+        statusText={mapStatus}
+        trackingStatusText={distanceTrackingLabel}
+      />
 
       {tracker.error ? (
         <View style={styles.errorPanel}>
@@ -409,6 +420,10 @@ export function LiveRunScreen({
       <View style={styles.friendPanel}>
         <Text style={styles.sectionTitle}>Group Status</Text>
         <Text style={styles.syncLine}>{syncStatusLabel}</Text>
+        <Text style={styles.trackingLine}>{distanceTrackingLabel}</Text>
+        <Text style={styles.syncDetail}>
+          GPS accepted {tracker.acceptedPointCount} - rejected {tracker.rejectedPointCount}
+        </Text>
         {tracker.syncMessage ? <Text style={styles.syncDetail}>{tracker.syncMessage}</Text> : null}
         {tracker.pendingLocationUpdates ? (
           <Text style={styles.syncDetail}>1 latest route point is waiting to sync.</Text>
@@ -531,6 +546,19 @@ function formatElapsed(totalSeconds: number): string {
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function formatDistanceTrackingStatus(quality: string): string {
+  if (quality === "normal") {
+    return "Tracking normally";
+  }
+  if (quality === "weak_gps") {
+    return "Weak GPS signal - distance paused";
+  }
+  if (quality === "too_fast") {
+    return "Movement too fast for running - not counted";
+  }
+  return "Waiting for stable GPS";
+}
+
 function formatCheerCode(code: string): string {
   return code
     .split("_")
@@ -609,6 +637,11 @@ const styles = StyleSheet.create({
     color: "#64748b",
     fontSize: 12,
     fontWeight: "700",
+  },
+  trackingLine: {
+    color: "#0f766e",
+    fontSize: 13,
+    fontWeight: "900",
   },
   cheerLine: {
     color: "#7c2d12",

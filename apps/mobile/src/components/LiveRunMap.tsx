@@ -11,6 +11,9 @@ interface LiveRunMapProps {
   currentPoint?: LatLng;
   route: LatLng[];
   statusText: string;
+  trackingStatusText?: string;
+  acceptedPointCount?: number;
+  rejectedPointCount?: number;
 }
 
 const DEFAULT_REGION = {
@@ -22,9 +25,25 @@ const DEFAULT_REGION = {
 
 const NativeMaps = ENABLE_NATIVE_MAP ? (require("react-native-maps") as typeof import("react-native-maps")) : undefined;
 
-export function LiveRunMap({ currentPoint, route, statusText }: LiveRunMapProps) {
+export function LiveRunMap({
+  currentPoint,
+  route,
+  statusText,
+  trackingStatusText,
+  acceptedPointCount = 0,
+  rejectedPointCount = 0,
+}: LiveRunMapProps) {
   if (!NativeMaps) {
-    return <LiveRunMapFallback currentPoint={currentPoint} route={route} statusText={statusText} />;
+    return (
+      <LiveRunMapFallback
+        acceptedPointCount={acceptedPointCount}
+        currentPoint={currentPoint}
+        rejectedPointCount={rejectedPointCount}
+        route={route}
+        statusText={statusText}
+        trackingStatusText={trackingStatusText}
+      />
+    );
   }
 
   const MapView = NativeMaps.default;
@@ -47,12 +66,20 @@ export function LiveRunMap({ currentPoint, route, statusText }: LiveRunMapProps)
       </MapView>
       <View style={styles.status}>
         <Text style={styles.statusText}>{statusText}</Text>
+        {trackingStatusText ? <Text style={styles.statusSubText}>{trackingStatusText}</Text> : null}
       </View>
     </View>
   );
 }
 
-function LiveRunMapFallback({ currentPoint, route, statusText }: LiveRunMapProps) {
+function LiveRunMapFallback({
+  acceptedPointCount = 0,
+  currentPoint,
+  rejectedPointCount = 0,
+  route,
+  statusText,
+  trackingStatusText,
+}: LiveRunMapProps) {
   return (
     <View style={[styles.container, styles.fallbackContainer]}>
       <View style={styles.fallbackHeader}>
@@ -69,6 +96,17 @@ function LiveRunMapFallback({ currentPoint, route, statusText }: LiveRunMapProps
           <Text style={styles.fallbackValue}>{route.length}</Text>
         </View>
       </View>
+      <View style={styles.fallbackGrid}>
+        <View style={styles.fallbackMetric}>
+          <Text style={styles.fallbackLabel}>Accepted</Text>
+          <Text style={styles.fallbackValue}>{acceptedPointCount}</Text>
+        </View>
+        <View style={styles.fallbackMetric}>
+          <Text style={styles.fallbackLabel}>Rejected</Text>
+          <Text style={styles.fallbackValue}>{rejectedPointCount}</Text>
+        </View>
+      </View>
+      {trackingStatusText ? <Text style={styles.fallbackTracking}>{trackingStatusText}</Text> : null}
       <Text style={styles.fallbackCoordinates}>
         {currentPoint
           ? `${currentPoint.latitude.toFixed(5)}, ${currentPoint.longitude.toFixed(5)}`
@@ -162,5 +200,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     textAlign: "center",
+  },
+  statusSubText: {
+    color: "#dbeafe",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2,
+    textAlign: "center",
+  },
+  fallbackTracking: {
+    color: "#0f766e",
+    fontSize: 13,
+    fontWeight: "900",
   },
 });
