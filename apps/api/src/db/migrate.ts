@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
 import { assertDeploySafeConfig, loadConfig } from "../config.js";
@@ -16,7 +16,7 @@ async function migrate(): Promise<void> {
     )
   `);
 
-  const migrationsDir = path.resolve(process.cwd(), "db", "migrations");
+  const migrationsDir = await findMigrationsDir();
   const filenames = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql")).sort();
 
   for (const filename of filenames) {
@@ -39,6 +39,24 @@ async function migrate(): Promise<void> {
       throw error;
     } finally {
       client.release();
+    }
+  }
+}
+
+async function findMigrationsDir(): Promise<string> {
+  let current = path.resolve(process.cwd());
+
+  while (true) {
+    const candidate = path.join(current, "db", "migrations");
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw new Error(`Could not find db/migrations from ${process.cwd()}`);
+      }
+      current = parent;
     }
   }
 }
