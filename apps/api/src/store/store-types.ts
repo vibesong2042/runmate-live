@@ -17,6 +17,16 @@ export interface PrivacyConsent {
   consentedAt: string;
 }
 
+export interface FriendInvite {
+  code: string;
+  creatorUserId: string;
+  expiresAt: string;
+  acceptedByUserId?: string;
+  acceptedAt?: string;
+  revokedAt?: string;
+  createdAt: string;
+}
+
 export interface CreateSessionInput {
   hostUserId: string;
   title: string;
@@ -48,6 +58,14 @@ export interface RunMateStore {
     friendshipId: string,
     status: Extract<Friendship["status"], "accepted" | "declined">,
   ): Promise<Friendship | undefined>;
+  upsertAcceptedFriendship(requesterId: string, addresseeId: string): Promise<Friendship>;
+  createFriendInvite(input: Pick<FriendInvite, "code" | "creatorUserId" | "expiresAt">): Promise<FriendInvite>;
+  getFriendInvite(code: string): Promise<FriendInvite | undefined>;
+  markFriendInviteAccepted(
+    code: string,
+    acceptedByUserId: string,
+    acceptedAt: string,
+  ): Promise<FriendInvite | undefined>;
 
   createSession(input: CreateSessionInput): Promise<RunningSession>;
   listSessionsForUser(userId: string): Promise<RunningSession[]>;

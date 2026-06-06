@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { FriendSummaryDto } from "../api/client";
+import { ApiError, type FriendSummaryDto } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { demoFriends } from "../state/app-state";
 
 interface FriendsScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
@@ -11,11 +10,11 @@ interface FriendsScreenProps {
 }
 
 export function FriendsScreen({ authenticatedGet, authenticatedPost, onStartRun }: FriendsScreenProps) {
-  const [friends, setFriends] = useState<FriendSummaryDto[]>(demoFriends);
+  const [friends, setFriends] = useState<FriendSummaryDto[]>([]);
   const [createdInviteCode, setCreatedInviteCode] = useState<string>();
   const [enteredInviteCode, setEnteredInviteCode] = useState("");
   const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
-  const [status, setStatus] = useState("Demo friends loaded");
+  const [status, setStatus] = useState("Loading friends...");
 
   useEffect(() => {
     let isMounted = true;
@@ -24,18 +23,14 @@ export function FriendsScreen({ authenticatedGet, authenticatedPost, onStartRun 
         if (!isMounted) {
           return;
         }
-        if (response.friends?.length) {
-          setFriends(response.friends);
-          setStatus("Friends synced");
-        } else {
-          setFriends(demoFriends);
-          setStatus("No server friends yet - showing demo friends");
-        }
+        const serverFriends = response.friends ?? [];
+        setFriends(serverFriends);
+        setStatus(serverFriends.length ? "Friends synced" : "No friends connected yet");
       })
       .catch(() => {
         if (isMounted) {
-          setFriends(demoFriends);
-          setStatus("API unavailable - showing demo friends");
+          setFriends([]);
+          setStatus("Could not load friends. Check API connection.");
         }
       });
     return () => {
@@ -50,8 +45,8 @@ export function FriendsScreen({ authenticatedGet, authenticatedPost, onStartRun 
       setCreatedInviteCode(response.inviteCode);
       setStatus("Invite ready");
     } catch {
-      setCreatedInviteCode(`DEMO-${Math.floor(100000 + Math.random() * 900000)}`);
-      setStatus("API unavailable - demo invite ready");
+      setCreatedInviteCode(undefined);
+      setStatus("Could not create invite. Check API connection.");
     }
   }
 
@@ -73,13 +68,19 @@ export function FriendsScreen({ authenticatedGet, authenticatedPost, onStartRun 
           return [response.friend!, ...withoutDuplicate];
         });
       }
+      await refreshFriends().catch(() => undefined);
       setEnteredInviteCode("");
       setStatus("Friend added");
-    } catch {
-      setStatus("Could not accept invite. Check the code and API connection.");
+    } catch (error) {
+      setStatus(getInviteAcceptErrorMessage(error));
     } finally {
       setIsAcceptingInvite(false);
     }
+  }
+
+  async function refreshFriends() {
+    const response = await authenticatedGet<{ friends?: FriendSummaryDto[] }>("/friends");
+    setFriends(response.friends ?? []);
   }
 
   return (
@@ -110,20 +111,45 @@ export function FriendsScreen({ authenticatedGet, authenticatedPost, onStartRun 
       </View>
 
       <Text style={styles.sectionTitle}>Friend List</Text>
-      {friends.map((friend) => (
-        <View key={friend.id} style={styles.friend}>
-          <View>
-            <Text style={styles.name}>{friend.nickname}</Text>
-            <Text style={styles.meta}>
-              {friend.runnerId ? `@${friend.runnerId} - ` : ""}
-              {friend.status === "running" ? `running - ${friend.currentPace}/km` : friend.status}
-            </Text>
+      {friends.length ? (
+        friends.map((friend) => (
+          <View key={friend.id} style={styles.friend}>
+            <View>
+              <Text style={styles.name}>{friend.nickname}</Text>
+              <Text style={styles.meta}>
+                {friend.runnerId ? `@${friend.runnerId} - ` : ""}
+                {friend.status === "running" ? `running - ${friend.currentPace}/km` : friend.status}
+              </Text>
+            </View>
+            <PrimaryButton label="Run" variant="secondary" onPress={onStartRun} />
           </View>
-          <PrimaryButton label="Run" variant="secondary" onPress={onStartRun} />
+        ))
+      ) : (
+        <View style={styles.emptyPanel}>
+          <Text style={styles.emptyText}>No friends connected yet.</Text>
         </View>
-      ))}
+      )}
     </ScrollView>
   );
+}
+
+function getInviteAcceptErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return "Could not accept invite. Try again.";
+  }
+  if (error.status === 404) {
+    return "Invite code was not found. Ask your friend to create a new code.";
+  }
+  if (error.status === 410) {
+    return "Invite code expired. Ask your friend to create a new one.";
+  }
+  if (error.status === 400) {
+    return error.message || "Invite code is not valid.";
+  }
+  if (error.status === 0) {
+    return "API connection failed. Check your internet connection.";
+  }
+  return "Could not accept invite. Check the code and API connection.";
 }
 
 const styles = StyleSheet.create({
@@ -187,6 +213,18 @@ const styles = StyleSheet.create({
     borderColor: "#e2e8f0",
     backgroundColor: "#ffffff",
     padding: 14,
+  },
+  emptyPanel: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#ffffff",
+    padding: 14,
+  },
+  emptyText: {
+    color: "#64748b",
+    fontSize: 14,
+    fontWeight: "700",
   },
   name: {
     color: "#0f172a",

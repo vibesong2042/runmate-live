@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildApp } from "../app.js";
 import { assertDeploySafeConfig, loadConfig } from "../config.js";
+import { store } from "../store/index.js";
 
 test("preview deployment rejects unsafe development defaults", () => {
   const previousEnv = {
@@ -203,6 +204,55 @@ test("two development users can connect with a friend invite code", async () => 
       payload: { inviteCode: inviteBody.inviteCode },
     });
     assert.equal(accepted.statusCode, 201);
+
+    const acceptedAgain = await app.inject({
+      method: "POST",
+      url: "/invites/friend-link/accept",
+      headers: {
+        authorization: `Bearer ${second.accessToken}`,
+        "content-type": "application/json",
+      },
+      payload: { inviteCode: inviteBody.inviteCode },
+    });
+    assert.equal(acceptedAgain.statusCode, 200);
+
+    const selfAccepted = await app.inject({
+      method: "POST",
+      url: "/invites/friend-link/accept",
+      headers: {
+        authorization: `Bearer ${first.accessToken}`,
+        "content-type": "application/json",
+      },
+      payload: { inviteCode: inviteBody.inviteCode },
+    });
+    assert.equal(selfAccepted.statusCode, 400);
+
+    const missingAccepted = await app.inject({
+      method: "POST",
+      url: "/invites/friend-link/accept",
+      headers: {
+        authorization: `Bearer ${second.accessToken}`,
+        "content-type": "application/json",
+      },
+      payload: { inviteCode: "NOPE0000" },
+    });
+    assert.equal(missingAccepted.statusCode, 404);
+
+    await store.createFriendInvite({
+      code: "EXPIRED1",
+      creatorUserId: first.user.id,
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const expiredAccepted = await app.inject({
+      method: "POST",
+      url: "/invites/friend-link/accept",
+      headers: {
+        authorization: `Bearer ${second.accessToken}`,
+        "content-type": "application/json",
+      },
+      payload: { inviteCode: "EXPIRED1" },
+    });
+    assert.equal(expiredAccepted.statusCode, 410);
 
     const firstFriends = await app.inject({
       method: "GET",

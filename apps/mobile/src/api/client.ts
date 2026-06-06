@@ -73,10 +73,23 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly path: string,
-    readonly detail?: { url?: string; reason?: string },
+  readonly detail?: { url?: string; reason?: string },
   ) {
     super(message);
   }
+}
+
+async function buildHttpError(method: string, path: string, response: Response): Promise<ApiError> {
+  let reason = `${method} ${path} failed with ${response.status}`;
+  try {
+    const body = (await response.json()) as { message?: string };
+    if (body.message) {
+      reason = body.message;
+    }
+  } catch {
+    // Keep the status-based fallback when the API does not return JSON.
+  }
+  return new ApiError(reason, response.status, path, { url: `${API_URL}${path}`, reason });
 }
 
 async function fetchWithTimeout(path: string, init: RequestInit): Promise<Response> {
@@ -132,7 +145,7 @@ export async function apiGet<T>(path: string, options: RequestOptions = {}): Pro
     throw error;
   }
   if (!response.ok) {
-    throw new ApiError(`GET ${path} failed with ${response.status}`, response.status, path);
+    throw await buildHttpError("GET", path, response);
   }
   return response.json() as Promise<T>;
 }
@@ -153,7 +166,7 @@ export async function apiPost<T>(path: string, body?: unknown, options: RequestO
     throw error;
   }
   if (!response.ok) {
-    throw new ApiError(`POST ${path} failed with ${response.status}`, response.status, path);
+    throw await buildHttpError("POST", path, response);
   }
   return response.json() as Promise<T>;
 }
@@ -259,7 +272,7 @@ function getDemoPostResponse<T>(path: string, body?: unknown): T | undefined {
 function getDemoGetResponse<T>(path: string): T | undefined {
   if (path === "/friends") {
     return {
-      friends: getDemoFriends(),
+      friends: [],
       friendships: [],
     } as T;
   }
@@ -309,14 +322,6 @@ function getDemoGetResponse<T>(path: string): T | undefined {
   }
 
   return undefined;
-}
-
-function getDemoFriends(): FriendSummaryDto[] {
-  return [
-    { id: "friend-1", nickname: "Minsu", status: "running", currentPace: "5:48" },
-    { id: "friend-2", nickname: "Jihyun", status: "online" },
-    { id: "friend-3", nickname: "Seoyeon", status: "offline" },
-  ];
 }
 
 function getDemoActivities(): ActivityRecord[] {

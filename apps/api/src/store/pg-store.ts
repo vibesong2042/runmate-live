@@ -10,7 +10,7 @@ import type {
 } from "@runmate/shared";
 import { calculateAveragePaceSecPerKm } from "@runmate/shared";
 import { DEV_USER_ID } from "../auth/dev-user.js";
-import type { CreateSessionInput, PrivacyConsent, RunMateStore } from "./store-types.js";
+import type { CreateSessionInput, FriendInvite, PrivacyConsent, RunMateStore } from "./store-types.js";
 
 const { Pool } = pg;
 
@@ -56,6 +56,18 @@ function mapFriendship(row: Row): Friendship {
     createdAt: iso(row.created_at)!,
     acceptedAt: iso(row.accepted_at),
     blockedAt: iso(row.blocked_at),
+  };
+}
+
+function mapFriendInvite(row: Row): FriendInvite {
+  return {
+    code: String(row.code),
+    creatorUserId: String(row.creator_user_id),
+    expiresAt: iso(row.expires_at)!,
+    acceptedByUserId: row.accepted_by_user_id ? String(row.accepted_by_user_id) : undefined,
+    acceptedAt: iso(row.accepted_at),
+    revokedAt: iso(row.revoked_at),
+    createdAt: iso(row.created_at)!,
   };
 }
 
@@ -290,6 +302,69 @@ export class PgStore implements RunMateStore {
       [friendshipId, status],
     );
     return result.rows[0] ? mapFriendship(result.rows[0]) : undefined;
+  }
+
+  async upsertAcceptedFriendship(requesterId: string, addresseeId: string): Promise<Friendship> {
+    const result = await this.pool.query(
+      `WITH existing AS (
+         SELECT id
+         FROM friendships
+         WHERE (requester_id = $1 AND addressee_id = $2)
+            OR (requester_id = $2 AND addressee_id = $1)
+         LIMIT 1
+       ),
+       updated AS (
+         UPDATE friendships
+         SET status = 'accepted',
+             accepted_at = COALESCE(accepted_at, now()),
+             blocked_at = NULL
+         WHERE id IN (SELECT id FROM existing)
+         RETURNING *
+       ),
+       inserted AS (
+         INSERT INTO friendships (requester_id, addressee_id, status, accepted_at)
+         SELECT $1, $2, 'accepted', now()
+         WHERE NOT EXISTS (SELECT 1 FROM existing)
+         RETURNING *
+       )
+       SELECT * FROM updated
+       UNION ALL
+       SELECT * FROM inserted
+       LIMIT 1`,
+      [requesterId, addresseeId],
+    );
+    return mapFriendship(result.rows[0]);
+  }
+
+  async createFriendInvite(input: Pick<FriendInvite, "code" | "creatorUserId" | "expiresAt">): Promise<FriendInvite> {
+    const result = await this.pool.query(
+      `INSERT INTO friend_invites (code, creator_user_id, expires_at)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [input.code, input.creatorUserId, input.expiresAt],
+    );
+    return mapFriendInvite(result.rows[0]);
+  }
+
+  async getFriendInvite(code: string): Promise<FriendInvite | undefined> {
+    const result = await this.pool.query("SELECT * FROM friend_invites WHERE code = $1", [code]);
+    return result.rows[0] ? mapFriendInvite(result.rows[0]) : undefined;
+  }
+
+  async markFriendInviteAccepted(
+    code: string,
+    acceptedByUserId: string,
+    acceptedAt: string,
+  ): Promise<FriendInvite | undefined> {
+    const result = await this.pool.query(
+      `UPDATE friend_invites
+       SET accepted_by_user_id = COALESCE(accepted_by_user_id, $2),
+           accepted_at = COALESCE(accepted_at, $3)
+       WHERE code = $1
+       RETURNING *`,
+      [code, acceptedByUserId, acceptedAt],
+    );
+    return result.rows[0] ? mapFriendInvite(result.rows[0]) : undefined;
   }
 
   async createSession(input: CreateSessionInput): Promise<RunningSession> {

@@ -11,7 +11,7 @@ import type {
 } from "@runmate/shared";
 import { calculateAveragePaceSecPerKm } from "@runmate/shared";
 import { DEV_USER_ID } from "../auth/dev-user.js";
-import type { CreateSessionInput, PrivacyConsent, RunMateStore } from "./store-types.js";
+import type { CreateSessionInput, FriendInvite, PrivacyConsent, RunMateStore } from "./store-types.js";
 
 interface StoreSnapshot {
   users: User[];
@@ -21,6 +21,7 @@ interface StoreSnapshot {
   liveLocations: Array<[string, LiveLocation[]]>;
   activities: ActivityRecord[];
   privacyConsents: Array<[string, PrivacyConsent[]]>;
+  friendInvites: FriendInvite[];
 }
 
 export class InMemoryStore implements RunMateStore {
@@ -31,6 +32,7 @@ export class InMemoryStore implements RunMateStore {
   readonly liveLocations = new Map<string, LiveLocation[]>();
   readonly activities = new Map<string, ActivityRecord>();
   readonly privacyConsents = new Map<string, PrivacyConsent[]>();
+  readonly friendInvites = new Map<string, FriendInvite>();
 
   constructor(private readonly persistencePath?: string) {
     this.loadSnapshot();
@@ -105,6 +107,12 @@ export class InMemoryStore implements RunMateStore {
           this.privacyConsents.set(userId, consents);
         }
       }
+      if (Array.isArray(snapshot.friendInvites)) {
+        this.friendInvites.clear();
+        for (const invite of snapshot.friendInvites) {
+          this.friendInvites.set(invite.code, invite);
+        }
+      }
     } catch {
       // Development persistence should never prevent the API from booting.
     }
@@ -124,6 +132,7 @@ export class InMemoryStore implements RunMateStore {
         liveLocations: [...this.liveLocations.entries()],
         activities: [...this.activities.values()],
         privacyConsents: [...this.privacyConsents.entries()],
+        friendInvites: [...this.friendInvites.values()],
       };
       writeFileSync(this.persistencePath, JSON.stringify(snapshot, null, 2));
     } catch {
@@ -241,6 +250,63 @@ export class InMemoryStore implements RunMateStore {
     friendship.acceptedAt = status === "accepted" ? new Date().toISOString() : friendship.acceptedAt;
     this.persist();
     return friendship;
+  }
+
+  async upsertAcceptedFriendship(requesterId: string, addresseeId: string): Promise<Friendship> {
+    const now = new Date().toISOString();
+    const existing = [...this.friendships.values()].find(
+      (item) =>
+        (item.requesterId === requesterId && item.addresseeId === addresseeId) ||
+        (item.requesterId === addresseeId && item.addresseeId === requesterId),
+    );
+    if (existing) {
+      existing.status = "accepted";
+      existing.acceptedAt = existing.acceptedAt ?? now;
+      existing.blockedAt = undefined;
+      this.persist();
+      return existing;
+    }
+
+    const friendship: Friendship = {
+      id: randomUUID(),
+      requesterId,
+      addresseeId,
+      status: "accepted",
+      createdAt: now,
+      acceptedAt: now,
+    };
+    this.friendships.set(friendship.id, friendship);
+    this.persist();
+    return friendship;
+  }
+
+  async createFriendInvite(input: Pick<FriendInvite, "code" | "creatorUserId" | "expiresAt">): Promise<FriendInvite> {
+    const invite: FriendInvite = {
+      ...input,
+      createdAt: new Date().toISOString(),
+    };
+    this.friendInvites.set(invite.code, invite);
+    this.persist();
+    return invite;
+  }
+
+  async getFriendInvite(code: string): Promise<FriendInvite | undefined> {
+    return this.friendInvites.get(code);
+  }
+
+  async markFriendInviteAccepted(
+    code: string,
+    acceptedByUserId: string,
+    acceptedAt: string,
+  ): Promise<FriendInvite | undefined> {
+    const invite = this.friendInvites.get(code);
+    if (!invite) {
+      return undefined;
+    }
+    invite.acceptedByUserId = invite.acceptedByUserId ?? acceptedByUserId;
+    invite.acceptedAt = invite.acceptedAt ?? acceptedAt;
+    this.persist();
+    return invite;
   }
 
   async createSession(input: CreateSessionInput): Promise<RunningSession> {

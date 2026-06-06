@@ -13,15 +13,6 @@ const acceptInviteSchema = z.object({
   inviteCode: z.string().min(4).max(36),
 });
 
-interface FriendInvite {
-  code: string;
-  creatorId: string;
-  expiresAt: string;
-  createdAt: string;
-}
-
-const friendInvites = new Map<string, FriendInvite>();
-
 export async function registerFriendRoutes(app: FastifyInstance): Promise<void> {
   app.get("/friends", async (request) => {
     const currentUser = getCurrentUser(request);
@@ -80,14 +71,12 @@ export async function registerFriendRoutes(app: FastifyInstance): Promise<void> 
 
   app.post("/invites/friend-link", async (request, reply) => {
     const currentUser = getCurrentUser(request);
-    const inviteCode = createInviteCode();
-    const invite: FriendInvite = {
+    const inviteCode = await createInviteCode();
+    const invite = await store.createFriendInvite({
       code: inviteCode,
-      creatorId: currentUser.id,
+      creatorUserId: currentUser.id,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      createdAt: new Date().toISOString(),
-    };
-    friendInvites.set(inviteCode, invite);
+    });
     return reply.code(201).send({
       inviteCode,
       expiresAt: invite.expiresAt,
@@ -97,32 +86,40 @@ export async function registerFriendRoutes(app: FastifyInstance): Promise<void> 
   app.post("/invites/friend-link/accept", async (request, reply) => {
     const currentUser = getCurrentUser(request);
     const input = acceptInviteSchema.parse(request.body);
-    const invite = friendInvites.get(input.inviteCode.trim().toUpperCase());
+    const inviteCode = normalizeInviteCode(input.inviteCode);
+    if (!inviteCode) {
+      return reply.code(400).send({ message: "Invite code is required" });
+    }
+
+    const invite = await store.getFriendInvite(inviteCode);
     if (!invite) {
       return reply.code(404).send({ message: "Invite code not found" });
     }
-    if (Date.parse(invite.expiresAt) <= Date.now()) {
-      friendInvites.delete(invite.code);
+    if (invite.revokedAt) {
       return reply.code(410).send({ message: "Invite code expired" });
     }
-    if (invite.creatorId === currentUser.id) {
+    if (Date.parse(invite.expiresAt) <= Date.now()) {
+      return reply.code(410).send({ message: "Invite code expired" });
+    }
+    if (invite.creatorUserId === currentUser.id) {
       return reply.code(400).send({ message: "You cannot accept your own invite" });
     }
 
     const existing = (await store.listAcceptedFriendships(currentUser.id)).find(
-      (friendship) => getFriendId(friendship, currentUser.id) === invite.creatorId,
+      (friendship) => getFriendId(friendship, currentUser.id) === invite.creatorUserId,
     );
     if (existing) {
-      const friend = await store.getUser(invite.creatorId);
+      await store.markFriendInviteAccepted(invite.code, currentUser.id, new Date().toISOString());
+      const friend = await store.getUser(invite.creatorUserId);
       return reply.send({
         friendship: existing,
         friend: friend ? toFriendSummary(friend) : undefined,
       });
     }
 
-    const friendship = await store.addFriendRequest(invite.creatorId, currentUser.id);
-    const accepted = await store.updateFriendshipStatus(friendship.id, "accepted");
-    const friend = await store.getUser(invite.creatorId);
+    const accepted = await store.upsertAcceptedFriendship(invite.creatorUserId, currentUser.id);
+    await store.markFriendInviteAccepted(invite.code, currentUser.id, new Date().toISOString());
+    const friend = await store.getUser(invite.creatorUserId);
     return reply.code(201).send({
       friendship: accepted,
       friend: friend ? toFriendSummary(friend) : undefined,
@@ -130,14 +127,18 @@ export async function registerFriendRoutes(app: FastifyInstance): Promise<void> 
   });
 }
 
-function createInviteCode(): string {
+async function createInviteCode(): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
-    if (!friendInvites.has(code)) {
+    if (!(await store.getFriendInvite(code))) {
       return code;
     }
   }
   return randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase();
+}
+
+function normalizeInviteCode(code: string): string {
+  return code.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
 
 function getFriendId(friendship: Friendship, currentUserId: string): string | undefined {

@@ -3,7 +3,6 @@ import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "re
 import type { RunningSession, RunningSessionParticipant } from "@runmate/shared";
 import type { FriendSummaryDto } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { demoFriends } from "../state/app-state";
 
 interface RunSetupScreenProps {
   accessToken?: string;
@@ -36,9 +35,9 @@ export function RunSetupScreen({ accessToken, authenticatedGet, authenticatedPos
       })
       .catch(() => {
         if (isMounted) {
-          setFriends(demoFriends);
-          setSelectedFriendIds(new Set(demoFriends.map((friend) => friend.id)));
-          setFriendStatus("API unavailable - showing demo friends");
+          setFriends([]);
+          setSelectedFriendIds(new Set());
+          setFriendStatus("Could not load friends. Check API connection.");
         }
       });
     return () => {
