@@ -12,6 +12,10 @@ import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { useAuthSession } from "./src/hooks/useAuthSession";
 import { loadPendingRunResults, removePendingRunResult, savePendingRunResult } from "./src/storage/pending-run-results";
 import type { AppScreen } from "./src/state/app-state";
+import { ApiError } from "./src/api/client";
+import { initializeSentry, withSentry } from "./src/monitoring/sentry";
+
+initializeSentry();
 
 const tabs: Array<{ screen: AppScreen; label: string }> = [
   { screen: "home", label: "Home" },
@@ -20,7 +24,7 @@ const tabs: Array<{ screen: AppScreen; label: string }> = [
   { screen: "settings", label: "Settings" },
 ];
 
-export default function App() {
+function App() {
   return (
     <SafeAreaProvider>
       <AppShell />
@@ -28,12 +32,15 @@ export default function App() {
   );
 }
 
+export default withSentry(App);
+
 function AppShell() {
   const [hasOnboarded, setHasOnboarded] = useState(false);
   const [screen, setScreen] = useState<AppScreen>("home");
   const [activeSessionId, setActiveSessionId] = useState<string>();
   const [lastRunResult, setLastRunResult] = useState<RunResultSummary>();
   const [isRetryingSave, setIsRetryingSave] = useState(false);
+  const [homeError, setHomeError] = useState<string>();
   const auth = useAuthSession();
 
   useEffect(() => {
@@ -124,10 +131,16 @@ function AppShell() {
       return (
         <HomeScreen
           authenticatedGet={auth.authenticatedGet}
+          error={homeError}
           onJoinSession={async (sessionId) => {
-            await auth.authenticatedPost(`/running-sessions/${sessionId}/join`, {});
-            setActiveSessionId(sessionId);
-            setScreen("liveRun");
+            setHomeError(undefined);
+            try {
+              await auth.authenticatedPost(`/running-sessions/${sessionId}/join`, {});
+              setActiveSessionId(sessionId);
+              setScreen("liveRun");
+            } catch (error) {
+              setHomeError(getJoinErrorMessage(error));
+            }
           }}
           onNavigate={setScreen}
         />
@@ -161,6 +174,7 @@ function AppShell() {
         <LiveRunScreen
           sessionId={activeSessionId}
           accessToken={auth.session.accessToken}
+          getAccessToken={auth.getAccessToken}
           authenticatedGet={auth.authenticatedGet}
           authenticatedPost={auth.authenticatedPost}
           userId={auth.session.user.id}
@@ -188,8 +202,8 @@ function AppShell() {
     if (screen === "profile") {
       return <ProfileScreen authenticatedGet={auth.authenticatedGet} />;
     }
-    return <SettingsScreen />;
-  }, [activeSessionId, auth, hasOnboarded, isRetryingSave, lastRunResult, retryPendingResultSave, screen]);
+    return <SettingsScreen authStatus={auth.authStatus} />;
+  }, [activeSessionId, auth, hasOnboarded, homeError, isRetryingSave, lastRunResult, retryPendingResultSave, screen]);
 
   return (
     <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
@@ -210,6 +224,25 @@ function AppShell() {
       ) : null}
     </SafeAreaView>
   );
+}
+
+function getJoinErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return "Could not join the running session. Try again.";
+  }
+  if (error.status === 0) {
+    return "API connection failed. Check your internet connection.";
+  }
+  if (error.status === 401) {
+    return "Sign-in expired. Reopen the app and sign in again.";
+  }
+  if (error.status === 403) {
+    return "You can join only runs where you are invited.";
+  }
+  if (error.status >= 500) {
+    return "Server error while joining the run. Try again in a moment.";
+  }
+  return error.message || "Could not join the running session.";
 }
 
 const styles = StyleSheet.create({

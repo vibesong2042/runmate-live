@@ -12,11 +12,18 @@ import {
   type ServerRealtimeEvent,
 } from "@runmate/shared";
 import { LiveRunSocket, type LiveRunSocketStatus } from "../api/live-run-socket";
+import {
+  clearLiveLocationBuffer,
+  loadLiveLocationBuffer,
+  saveLiveLocationBuffer,
+} from "../storage/live-location-buffer";
+import { saveLiveRunDiagnostics } from "../storage/live-run-diagnostics";
 
 interface UseLiveRunTrackerOptions {
   sessionId: string;
   userId: string;
   accessToken: string;
+  getAccessToken: () => Promise<string>;
 }
 
 export interface LiveRunTrackerState {
@@ -28,6 +35,7 @@ export interface LiveRunTrackerState {
   acceptedPointCount: number;
   rejectedPointCount: number;
   pendingLocationUpdates: number;
+  reconnectAttempt: number;
   lastSyncedAt?: string;
   isTracking: boolean;
   elapsedSeconds: number;
@@ -35,6 +43,7 @@ export interface LiveRunTrackerState {
   currentPaceSecPerKm?: number;
   averagePaceSecPerKm?: number;
   accuracyMeters?: number;
+  speedMps?: number;
   latitude?: number;
   longitude?: number;
   lastLocationAt?: string;
@@ -80,7 +89,7 @@ const LOCATION_OPTIONS: Location.LocationOptions = {
 
 const TOO_FAST_ANCHOR_RESET_THRESHOLD = 3;
 
-export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRunTrackerOptions) {
+export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessToken }: UseLiveRunTrackerOptions) {
   const [state, setState] = useState<LiveRunTrackerState>({
     permissionStatus: "unknown",
     syncStatus: "idle",
@@ -95,6 +104,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
     acceptedPointCount: 0,
     rejectedPointCount: 0,
     pendingLocationUpdates: 0,
+    reconnectAttempt: 0,
   });
   const startedAtRef = useRef<number | undefined>(undefined);
   const acceptedPointRef = useRef<GeoPoint | undefined>(undefined);
@@ -104,22 +114,73 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
   const subscriptionRef = useRef<Location.LocationSubscription | undefined>(undefined);
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const socketRef = useRef<LiveRunSocket | undefined>(undefined);
-  const pendingLocationRef = useRef<ClientRealtimeEvent | undefined>(undefined);
+  const pendingLocationQueueRef = useRef<ClientRealtimeEvent[]>([]);
+  const isFlushingPendingLocationsRef = useRef(false);
 
-  const flushPendingLocation = useCallback(() => {
-    const pending = pendingLocationRef.current;
-    if (!pending || !socketRef.current?.send(pending)) {
+  const persistDiagnostics = useCallback((nextState: LiveRunTrackerState) => {
+    void saveLiveRunDiagnostics({
+      acceptedPointCount: nextState.acceptedPointCount,
+      gpsAccuracyMeters: nextState.accuracyMeters,
+      lastSyncedAt: nextState.lastSyncedAt,
+      pendingLocationUpdates: nextState.pendingLocationUpdates,
+      reconnectAttempt: nextState.reconnectAttempt,
+      rejectedPointCount: nextState.rejectedPointCount,
+      speedMps: nextState.speedMps,
+      syncMessage: nextState.syncMessage,
+      syncStatus: nextState.syncStatus,
+      trackingQuality: nextState.trackingQuality,
+      updatedAt: new Date().toISOString(),
+    });
+  }, []);
+
+  const patchState = useCallback(
+    (updater: (current: LiveRunTrackerState) => LiveRunTrackerState) => {
+      setState((current) => {
+        const next = updater(current);
+        persistDiagnostics(next);
+        return next;
+      });
+    },
+    [persistDiagnostics],
+  );
+
+  const flushPendingLocations = useCallback(async () => {
+    if (isFlushingPendingLocationsRef.current || !pendingLocationQueueRef.current.length) {
       return;
     }
 
-    pendingLocationRef.current = undefined;
-    setState((current) => ({
-      ...current,
-      lastSyncedAt: new Date().toISOString(),
-      pendingLocationUpdates: 0,
-      syncMessage: "Latest route point synced after reconnect",
-    }));
-  }, []);
+    isFlushingPendingLocationsRef.current = true;
+    try {
+      const remaining = [...pendingLocationQueueRef.current];
+      let lastSyncedAt: string | undefined;
+
+      while (remaining.length) {
+        const event = remaining[0];
+        if (!socketRef.current?.send(event)) {
+          break;
+        }
+        remaining.shift();
+        lastSyncedAt = new Date().toISOString();
+      }
+
+      pendingLocationQueueRef.current = remaining;
+      if (remaining.length) {
+        await saveLiveLocationBuffer(sessionId, userId, remaining);
+      } else {
+        await clearLiveLocationBuffer(sessionId, userId);
+      }
+      patchState((current) => ({
+        ...current,
+        lastSyncedAt: lastSyncedAt ?? current.lastSyncedAt,
+        pendingLocationUpdates: remaining.length,
+        syncMessage: remaining.length
+          ? "Some route points are still waiting to sync"
+          : "Buffered route points synced after reconnect",
+      }));
+    } finally {
+      isFlushingPendingLocationsRef.current = false;
+    }
+  }, [patchState, sessionId, userId]);
 
   const handleRealtimeEvent = useCallback(
     (event: ServerRealtimeEvent) => {
@@ -128,7 +189,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       }
 
       if (event.type === "participant:location" && event.userId !== userId) {
-        setState((current) => ({
+        patchState((current) => ({
           ...current,
           remoteLocations: {
             ...current.remoteLocations,
@@ -147,7 +208,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       }
 
       if (event.type === "participant:status") {
-        setState((current) => ({
+        patchState((current) => ({
           ...current,
           participantStatuses: {
             ...current.participantStatuses,
@@ -167,14 +228,14 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
           cheerCode: event.payload.cheerCode,
           sentAt: event.payload.sentAt,
         };
-        setState((current) => ({
+        patchState((current) => ({
           ...current,
           latestCheer: cheer,
           receivedCheers: [cheer, ...current.receivedCheers].slice(0, 20),
         }));
       }
     },
-    [sessionId, userId],
+    [patchState, sessionId, userId],
   );
 
   const stop = useCallback(() => {
@@ -186,78 +247,11 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       clearInterval(timerRef.current);
       timerRef.current = undefined;
     }
-    setState((current) => ({ ...current, isTracking: false }));
-  }, []);
+    patchState((current) => ({ ...current, isTracking: false }));
+  }, [patchState]);
 
-  const start = useCallback(async () => {
-    const permission = await Location.requestForegroundPermissionsAsync();
-    if (permission.status !== "granted") {
-      setState((current) => ({
-        ...current,
-        permissionStatus: "denied",
-        error: "Location permission is required.",
-      }));
-      return;
-    }
-
-    startedAtRef.current = Date.now();
-    acceptedPointRef.current = undefined;
-    tooFastRejectionStreakRef.current = 0;
-    distanceRef.current = 0;
-    samplesRef.current = [];
-    pendingLocationRef.current = undefined;
-    if (accessToken === "demo-access-token") {
-      socketRef.current = undefined;
-    } else {
-      socketRef.current = new LiveRunSocket();
-      socketRef.current.connect({
-        accessToken,
-        sessionId,
-        onEvent: handleRealtimeEvent,
-        onStatus: (update) => {
-          setState((current) => ({
-            ...current,
-            syncStatus: update.status,
-            syncMessage: update.message,
-            pendingLocationUpdates: pendingLocationRef.current ? 1 : 0,
-          }));
-          if (update.status === "open") {
-            flushPendingLocation();
-          }
-        },
-      });
-    }
-
-    setState({
-      permissionStatus: "granted",
-      syncStatus: accessToken === "demo-access-token" ? "demo" : "connecting",
-      isTracking: true,
-      elapsedSeconds: 0,
-      distanceMeters: 0,
-      remoteLocations: {},
-      participantStatuses: {},
-      receivedCheers: [],
-      sentCheers: 0,
-      trackingQuality: "waiting",
-      lastRejectedLocationReason: undefined,
-      acceptedPointCount: 0,
-      rejectedPointCount: 0,
-      pendingLocationUpdates: 0,
-      syncMessage: accessToken === "demo-access-token" ? "Demo mode is local only" : "Opening live sync",
-      latestCheer: undefined,
-    });
-
-    timerRef.current = setInterval(() => {
-      if (!startedAtRef.current) {
-        return;
-      }
-      setState((current) => ({
-        ...current,
-        elapsedSeconds: Math.max(0, Math.round((Date.now() - startedAtRef.current!) / 1000)),
-      }));
-    }, 1000);
-
-    subscriptionRef.current = await Location.watchPositionAsync(LOCATION_OPTIONS, (location) => {
+  const handleLocationUpdate = useCallback(
+    async (location: Location.LocationObject) => {
       const recordedAt = new Date(location.timestamp).toISOString();
       const nextPoint: GeoPoint = {
         latitude: location.coords.latitude,
@@ -308,6 +302,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
       const currentPaceSecPerKm = calculateCurrentPaceSecPerKm(samplesRef.current);
       const averagePaceSecPerKm = calculateAveragePaceSecPerKm(distanceRef.current, elapsedSeconds);
       const distanceMeters = Math.round(distanceRef.current);
+      const speedMps = location.coords.speed ?? assessment.speedMps;
 
       const locationEvent: ClientRealtimeEvent = {
         type: "location:update",
@@ -318,7 +313,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
           altitude: nextPoint.altitude,
           accuracyMeters: nextPoint.accuracyMeters,
           heading: location.coords.heading ?? undefined,
-          speedMps: location.coords.speed ?? undefined,
+          speedMps,
           distanceMeters,
           currentPaceSecPerKm,
           averagePaceSecPerKm,
@@ -326,12 +321,27 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
           recordedAt,
         },
       };
-      const locationSent = accessToken === "demo-access-token" ? true : socketRef.current?.send(locationEvent) === true;
-      if (!locationSent) {
-        pendingLocationRef.current = locationEvent;
+      let locationSent = false;
+      if (accessToken === "demo-access-token") {
+        locationSent = true;
+      } else if (pendingLocationQueueRef.current.length) {
+        pendingLocationQueueRef.current = await saveLiveLocationBuffer(sessionId, userId, [
+          ...pendingLocationQueueRef.current,
+          locationEvent,
+        ]);
+        await flushPendingLocations();
+        locationSent = pendingLocationQueueRef.current.length === 0;
+      } else {
+        locationSent = socketRef.current?.send(locationEvent) === true;
+        if (!locationSent) {
+          pendingLocationQueueRef.current = await saveLiveLocationBuffer(sessionId, userId, [
+            ...pendingLocationQueueRef.current,
+            locationEvent,
+          ]);
+        }
       }
 
-      setState((current) => ({
+      patchState((current) => ({
         ...current,
         elapsedSeconds,
         distanceMeters,
@@ -342,22 +352,111 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
         acceptedPointCount: current.acceptedPointCount + acceptedPointIncrement,
         rejectedPointCount: current.rejectedPointCount + rejectedPointIncrement,
         accuracyMeters: nextPoint.accuracyMeters,
+        speedMps,
         latitude: nextPoint.latitude,
         longitude: nextPoint.longitude,
         lastLocationAt: recordedAt,
         lastSyncedAt: locationSent ? recordedAt : current.lastSyncedAt,
-        pendingLocationUpdates: pendingLocationRef.current ? 1 : 0,
+        pendingLocationUpdates: pendingLocationQueueRef.current.length,
         syncMessage: locationSent
           ? current.syncMessage
-          : "Latest route point is saved on this phone until live sync reconnects",
+          : "Route points are saved on this phone until live sync reconnects",
       }));
+    },
+    [accessToken, flushPendingLocations, patchState, sessionId, userId],
+  );
+
+  const start = useCallback(async () => {
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (permission.status !== "granted") {
+      patchState((current) => ({
+        ...current,
+        permissionStatus: "denied",
+        error: "Location permission is required.",
+      }));
+      return;
+    }
+
+    startedAtRef.current = Date.now();
+    acceptedPointRef.current = undefined;
+    tooFastRejectionStreakRef.current = 0;
+    distanceRef.current = 0;
+    samplesRef.current = [];
+    pendingLocationQueueRef.current = await loadLiveLocationBuffer(sessionId, userId);
+    if (accessToken === "demo-access-token") {
+      socketRef.current = undefined;
+    } else {
+      socketRef.current = new LiveRunSocket();
+      socketRef.current.connect({
+        getAccessToken,
+        sessionId,
+        onEvent: handleRealtimeEvent,
+        onStatus: (update) => {
+          patchState((current) => ({
+            ...current,
+            syncStatus: update.status,
+            syncMessage: update.message,
+            reconnectAttempt: update.attempt,
+            pendingLocationUpdates: pendingLocationQueueRef.current.length,
+          }));
+          if (update.status === "open") {
+            void flushPendingLocations();
+          }
+        },
+      });
+    }
+
+    const initialState: LiveRunTrackerState = {
+      permissionStatus: "granted",
+      syncStatus: accessToken === "demo-access-token" ? "demo" : "connecting",
+      isTracking: true,
+      elapsedSeconds: 0,
+      distanceMeters: 0,
+      remoteLocations: {},
+      participantStatuses: {},
+      receivedCheers: [],
+      sentCheers: 0,
+      trackingQuality: "waiting",
+      lastRejectedLocationReason: undefined,
+      acceptedPointCount: 0,
+      rejectedPointCount: 0,
+      pendingLocationUpdates: pendingLocationQueueRef.current.length,
+      reconnectAttempt: 0,
+      syncMessage: accessToken === "demo-access-token" ? "Demo mode is local only" : "Opening live sync",
+      latestCheer: undefined,
+    };
+    setState(initialState);
+    persistDiagnostics(initialState);
+
+    timerRef.current = setInterval(() => {
+      if (!startedAtRef.current) {
+        return;
+      }
+      patchState((current) => ({
+        ...current,
+        elapsedSeconds: Math.max(0, Math.round((Date.now() - startedAtRef.current!) / 1000)),
+      }));
+    }, 1000);
+
+    subscriptionRef.current = await Location.watchPositionAsync(LOCATION_OPTIONS, (location) => {
+      void handleLocationUpdate(location);
     });
-  }, [accessToken, flushPendingLocation, handleRealtimeEvent, sessionId]);
+  }, [
+    accessToken,
+    flushPendingLocations,
+    getAccessToken,
+    handleLocationUpdate,
+    handleRealtimeEvent,
+    patchState,
+    persistDiagnostics,
+    sessionId,
+    userId,
+  ]);
 
   const sendCheer = useCallback(
     (targetUserId: string, cheerCode: CheerSendEvent["payload"]["cheerCode"] = "nice") => {
       if (accessToken === "demo-access-token") {
-        setState((current) => ({ ...current, sentCheers: current.sentCheers + 1 }));
+        patchState((current) => ({ ...current, sentCheers: current.sentCheers + 1 }));
         return true;
       }
 
@@ -370,16 +469,16 @@ export function useLiveRunTracker({ sessionId, userId, accessToken }: UseLiveRun
         },
       });
       if (sent) {
-        setState((current) => ({ ...current, sentCheers: current.sentCheers + 1 }));
+        patchState((current) => ({ ...current, sentCheers: current.sentCheers + 1 }));
       } else {
-        setState((current) => ({
+        patchState((current) => ({
           ...current,
           syncMessage: "Cheer was not sent because live sync is reconnecting",
         }));
       }
       return Boolean(sent);
     },
-    [accessToken, sessionId],
+    [accessToken, patchState, sessionId],
   );
 
   useEffect(() => stop, [stop]);

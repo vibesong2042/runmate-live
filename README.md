@@ -14,6 +14,8 @@ Remote live running app MVP.
 - Mobile auth flow obtains a development JWT, then uses Bearer auth for session creation, run start, run finish, and WebSocket live tracking
 - Live run screen tracks route, pace, and live sync; native maps can be enabled with `EXPO_PUBLIC_ENABLE_NATIVE_MAP=true`
 - Running distance uses accepted GPS anchors, excludes weak GPS and vehicle-speed jumps, and shows tracking diagnostics in the live screen
+- Live run screen keeps the device awake during active tests, buffers unsynced GPS updates locally, and exposes beta diagnostics in Settings
+- Android preview builds support a fallback map profile and a Google Maps profile when `ANDROID_GOOGLE_MAPS_API_KEY` is provided
 - PostgreSQL schema migration for the MVP domain
 
 ## Prerequisites
@@ -65,6 +67,8 @@ See [docs/EXTERNAL_BETA_TESTING.md](docs/EXTERNAL_BETA_TESTING.md) for the full 
 The live run screen can use `react-native-maps` when `EXPO_PUBLIC_ENABLE_NATIVE_MAP=true`. Preview beta builds keep native maps off by default so live tracking can be tested safely before an Android Google Maps API key is configured.
 
 RunMate is a running tracker, not a general vehicle movement tracker. GPS points with weak accuracy, very small drift, stale timestamps, or movement faster than the configured running threshold are not counted toward distance. During a live run, the app shows whether distance is tracking normally, paused because of weak GPS, or excluded because movement is too fast for running.
+
+Use `eas build --profile preview --platform android` for the safe fallback map APK. Use `eas build --profile preview-map --platform android` only after setting `ANDROID_GOOGLE_MAPS_API_KEY` for the Android package `com.papasong.runmatelive`.
 
 For a real group running test:
 

@@ -1,7 +1,12 @@
-import type { ClientRealtimeEvent, ServerRealtimeEvent } from "@runmate/shared";
+import {
+  calculateReconnectDelayMs,
+  hasExceededReconnectAttempts,
+  type ClientRealtimeEvent,
+  type ServerRealtimeEvent,
+} from "@runmate/shared";
 import { WS_URL } from "../config/runtime";
 
-export type LiveRunSocketStatus = "connecting" | "open" | "closed" | "error" | "reconnecting";
+export type LiveRunSocketStatus = "connecting" | "open" | "closed" | "error" | "reconnecting" | "offline";
 
 export interface LiveRunSocketStatusUpdate {
   status: LiveRunSocketStatus;
@@ -10,13 +15,11 @@ export interface LiveRunSocketStatusUpdate {
 }
 
 interface LiveRunSocketConnectParams {
-  accessToken: string;
+  getAccessToken: () => Promise<string>;
   sessionId: string;
   onEvent: (event: ServerRealtimeEvent) => void;
   onStatus?: (update: LiveRunSocketStatusUpdate) => void;
 }
-
-const MAX_RECONNECT_DELAY_MS = 15000;
 
 export class LiveRunSocket {
   private socket?: WebSocket;
@@ -38,7 +41,7 @@ export class LiveRunSocket {
     this.params = params;
     this.closeRequested = false;
     this.reconnectAttempt = 0;
-    this.openSocket("connecting");
+    void this.openSocket("connecting");
   }
 
   send(event: ClientRealtimeEvent): boolean {
@@ -60,15 +63,27 @@ export class LiveRunSocket {
     this.socket = undefined;
   }
 
-  private openSocket(status: "connecting" | "reconnecting"): void {
+  private async openSocket(status: "connecting" | "reconnecting"): Promise<void> {
     const params = this.params;
     if (!params || this.closeRequested) {
       return;
     }
 
     const connectionId = this.connectionId;
+    let accessToken: string;
+    try {
+      accessToken = await params.getAccessToken();
+    } catch {
+      this.emitStatus("offline", "Server connection failed - run is saved locally");
+      return;
+    }
+
+    if (connectionId !== this.connectionId || this.closeRequested) {
+      return;
+    }
+
     const query = new URLSearchParams({
-      token: params.accessToken,
+      token: accessToken,
       sessionId: params.sessionId,
     });
     this.emitStatus(status, status === "connecting" ? "Opening live sync" : "Reconnecting live sync");
@@ -113,10 +128,14 @@ export class LiveRunSocket {
       return;
     }
     this.reconnectAttempt += 1;
-    const delayMs = Math.min(MAX_RECONNECT_DELAY_MS, 1000 * 2 ** Math.min(this.reconnectAttempt - 1, 4));
+    if (hasExceededReconnectAttempts(this.reconnectAttempt)) {
+      this.emitStatus("offline", "Server connection failed - run is saved locally");
+      return;
+    }
+    const delayMs = calculateReconnectDelayMs(this.reconnectAttempt);
     this.emitStatus("reconnecting", `Live sync disconnected. Retrying in ${Math.round(delayMs / 1000)}s`);
     this.reconnectTimer = setTimeout(() => {
-      this.openSocket("reconnecting");
+      void this.openSocket("reconnecting");
     }, delayMs);
   }
 

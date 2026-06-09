@@ -1,10 +1,52 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import * as Battery from "expo-battery";
 import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import {
+  API_URL,
+  ENABLE_NATIVE_MAP,
+  NATIVE_MAP_API_KEY_CONFIGURED,
+  RUNTIME_ENV,
+  SENTRY_ENABLED,
+  WS_URL,
+} from "../config/runtime";
+import { PrimaryButton } from "../components/PrimaryButton";
+import { captureDiagnosticError } from "../monitoring/sentry";
+import { loadLiveRunDiagnostics, type LiveRunDiagnostics } from "../storage/live-run-diagnostics";
 
-export function SettingsScreen() {
+interface SettingsScreenProps {
+  authStatus?: {
+    hasSession: boolean;
+    runnerId?: string;
+    isDemoMode: boolean;
+  };
+}
+
+export function SettingsScreen({ authStatus }: SettingsScreenProps) {
   const [defaultShare, setDefaultShare] = useState(true);
   const [voice, setVoice] = useState(true);
   const [safety, setSafety] = useState(true);
+  const [diagnostics, setDiagnostics] = useState<LiveRunDiagnostics>();
+  const [sentryStatus, setSentryStatus] = useState(SENTRY_ENABLED ? "Sentry ready" : "Sentry disabled");
+  const powerState = Battery.usePowerState();
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadDiagnostics() {
+      const loaded = await loadLiveRunDiagnostics();
+      if (isMounted) {
+        setDiagnostics(loaded);
+      }
+    }
+
+    void loadDiagnostics();
+    const timer = setInterval(() => {
+      void loadDiagnostics();
+    }, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -19,6 +61,33 @@ export function SettingsScreen() {
         <Text style={styles.body}>
           Detailed routes are private by default. Live location is visible only to invited session participants.
         </Text>
+      </View>
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Beta Diagnostics</Text>
+        <DiagnosticsRow label="Runtime" value={RUNTIME_ENV} />
+        <DiagnosticsRow label="Runner" value={authStatus?.runnerId ?? "not signed in"} />
+        <DiagnosticsRow label="API" value={API_URL} />
+        <DiagnosticsRow label="WebSocket" value={WS_URL} />
+        <DiagnosticsRow
+          label="Map"
+          value={`${ENABLE_NATIVE_MAP ? "native" : "fallback"} / key ${
+            NATIVE_MAP_API_KEY_CONFIGURED ? "configured" : "missing"
+          }`}
+        />
+        <DiagnosticsRow label="Battery" value={formatBatteryLevel(powerState.batteryLevel)} />
+        <DiagnosticsRow label="Low Power" value={powerState.lowPowerMode ? "on" : "off"} />
+        <DiagnosticsRow label="Live Sync" value={diagnostics?.syncStatus ?? "no run yet"} />
+        <DiagnosticsRow label="Reconnects" value={`${diagnostics?.reconnectAttempt ?? 0}`} />
+        <DiagnosticsRow label="Pending GPS" value={`${diagnostics?.pendingLocationUpdates ?? 0}`} />
+        <DiagnosticsRow label="GPS Accuracy" value={formatMeters(diagnostics?.gpsAccuracyMeters)} />
+        <DiagnosticsRow label="Speed" value={formatSpeed(diagnostics?.speedMps)} />
+        <DiagnosticsRow label="Last Sync" value={formatDateTime(diagnostics?.lastSyncedAt)} />
+        <DiagnosticsRow label="Sentry" value={sentryStatus} />
+        <PrimaryButton
+          label="Send Test Error"
+          variant="secondary"
+          onPress={() => setSentryStatus(captureDiagnosticError())}
+        />
       </View>
     </ScrollView>
   );
@@ -39,6 +108,34 @@ function SettingRow({
       <Switch value={value} onValueChange={onValueChange} />
     </View>
   );
+}
+
+function DiagnosticsRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.diagnosticsRow}>
+      <Text style={styles.diagnosticsLabel}>{label}</Text>
+      <Text style={styles.diagnosticsValue}>{value}</Text>
+    </View>
+  );
+}
+
+function formatBatteryLevel(value: number | null): string {
+  if (value === null || value < 0) {
+    return "unknown";
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatMeters(value?: number): string {
+  return value === undefined ? "--" : `${Math.round(value)} m`;
+}
+
+function formatSpeed(value?: number): string {
+  return value === undefined ? "--" : `${value.toFixed(1)} m/s`;
+}
+
+function formatDateTime(value?: string): string {
+  return value ? value.slice(11, 19) : "--";
 }
 
 const styles = StyleSheet.create({
@@ -80,5 +177,18 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontSize: 14,
     lineHeight: 21,
+  },
+  diagnosticsRow: {
+    gap: 4,
+  },
+  diagnosticsLabel: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  diagnosticsValue: {
+    color: "#0f172a",
+    fontSize: 13,
+    fontWeight: "800",
   },
 });

@@ -19,6 +19,16 @@ export interface AuthState {
 export function useAuthSession() {
   const [state, setState] = useState<AuthState>({ isSigningIn: false });
 
+  const refreshSession = useCallback(async (session: AuthSession): Promise<AuthSession> => {
+    const refreshed = await refreshAuthSession(session.refreshToken);
+    const nextSession: AuthSession = {
+      ...session,
+      ...refreshed,
+    };
+    setState({ session: nextSession, isSigningIn: false });
+    return nextSession;
+  }, []);
+
   const signIn = useCallback(async (profile: LoginProfile): Promise<AuthSession | undefined> => {
     if (state.session) {
       return state.session;
@@ -50,16 +60,11 @@ export function useAuthSession() {
           throw error;
         }
 
-        const refreshed = await refreshAuthSession(session.refreshToken);
-        const nextSession: AuthSession = {
-          ...session,
-          ...refreshed,
-        };
-        setState({ session: nextSession, isSigningIn: false });
+        const nextSession = await refreshSession(session);
         return apiPost<T>(path, body, { accessToken: nextSession.accessToken });
       }
     },
-    [signIn, state.session],
+    [refreshSession, signIn, state.session],
   );
 
   const authenticatedGet = useCallback(
@@ -76,16 +81,43 @@ export function useAuthSession() {
           throw error;
         }
 
-        const refreshed = await refreshAuthSession(session.refreshToken);
-        const nextSession: AuthSession = {
-          ...session,
-          ...refreshed,
-        };
-        setState({ session: nextSession, isSigningIn: false });
+        const nextSession = await refreshSession(session);
         return apiGet<T>(path, { accessToken: nextSession.accessToken });
       }
     },
-    [signIn, state.session],
+    [refreshSession, signIn, state.session],
+  );
+
+  const getAccessToken = useCallback(async (): Promise<string> => {
+    const session = state.session ?? (await signIn({ runnerId: "runner", nickname: "Runner" }));
+    if (!session) {
+      throw new Error("Missing auth session");
+    }
+
+    try {
+      const nextSession = await refreshSession(session);
+      return nextSession.accessToken;
+    } catch {
+      return session.accessToken;
+    }
+  }, [refreshSession, signIn, state.session]);
+
+  const refreshAccessToken = useCallback(async (): Promise<string> => {
+    const session = state.session;
+    if (!session) {
+      throw new Error("Missing auth session");
+    }
+    const nextSession = await refreshSession(session);
+    return nextSession.accessToken;
+  }, [refreshSession, state.session]);
+
+  const authStatus = useMemo(
+    () => ({
+      hasSession: Boolean(state.session),
+      runnerId: state.session?.user.runnerId,
+      isDemoMode: state.session?.accessToken === "demo-access-token",
+    }),
+    [state.session],
   );
 
   return useMemo(
@@ -94,8 +126,11 @@ export function useAuthSession() {
       signIn,
       authenticatedGet,
       authenticatedPost,
+      getAccessToken,
+      refreshAccessToken,
+      authStatus,
       isDemoMode: state.session?.accessToken === "demo-access-token",
     }),
-    [authenticatedGet, authenticatedPost, signIn, state],
+    [authStatus, authenticatedGet, authenticatedPost, getAccessToken, refreshAccessToken, signIn, state],
   );
 }

@@ -7,11 +7,12 @@ import type { AppScreen } from "../state/app-state";
 
 interface HomeScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
-  onJoinSession: (sessionId: string) => void;
+  error?: string;
+  onJoinSession: (sessionId: string) => Promise<void>;
   onNavigate: (screen: AppScreen) => void;
 }
 
-export function HomeScreen({ authenticatedGet, onJoinSession, onNavigate }: HomeScreenProps) {
+export function HomeScreen({ authenticatedGet, error, onJoinSession, onNavigate }: HomeScreenProps) {
   const [invitations, setInvitations] = useState<RunningSessionResponseDto[]>([]);
   const [weeklyDistanceMeters, setWeeklyDistanceMeters] = useState(0);
   const [activityCount, setActivityCount] = useState(0);
@@ -79,6 +80,7 @@ export function HomeScreen({ authenticatedGet, onJoinSession, onNavigate }: Home
         <MetricTile label="Runs" value={`${activityCount}`} />
       </View>
       <Text style={styles.statusText}>{activityStatus}</Text>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={styles.actions}>
         <PrimaryButton label="Run With Friends" onPress={() => onNavigate("runSetup")} />
@@ -98,7 +100,7 @@ export function HomeScreen({ authenticatedGet, onJoinSession, onNavigate }: Home
                   Host {host?.nickname ?? "Runner"} - {invitation.session.status}
                 </Text>
               </View>
-              <PrimaryButton label="Join" variant="secondary" onPress={() => onJoinSession(invitation.session.id)} />
+              <PrimaryButton label="Join" variant="secondary" onPress={() => void onJoinSession(invitation.session.id)} />
             </View>
           );
         })}
@@ -167,5 +169,10 @@ const styles = StyleSheet.create({
     color: "#64748b",
     fontSize: 13,
     fontWeight: "700",
+  },
+  errorText: {
+    color: "#dc2626",
+    fontSize: 14,
+    fontWeight: "800",
   },
 });

@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Platform, ScrollView, StyleSheet, Text, ToastAndroid, View } from "react-native";
 import * as Speech from "expo-speech";
-import { formatPace } from "@runmate/shared";
-import type {
-  RunningSessionFinishResponseDto,
-  RunningSessionResponseDto,
-  SessionParticipantSummaryDto,
+import { useKeepAwake } from "expo-keep-awake";
+import { filterDisplayRoutePoints, formatPace, smoothDisplayRoutePoints, type GeoPoint } from "@runmate/shared";
+import {
+  ApiError,
+  type RunningSessionFinishResponseDto,
+  type RunningSessionResponseDto,
+  type SessionParticipantSummaryDto,
 } from "../api/client";
 import { LiveRunMap } from "../components/LiveRunMap";
 import { MetricTile } from "../components/MetricTile";
@@ -17,6 +19,7 @@ import type { RunResultSummary } from "./ResultScreen";
 interface LiveRunScreenProps {
   sessionId: string;
   accessToken: string;
+  getAccessToken: () => Promise<string>;
   authenticatedGet: <T>(path: string) => Promise<T>;
   authenticatedPost: <T>(path: string, body?: unknown) => Promise<T>;
   userId: string;
@@ -26,15 +29,17 @@ interface LiveRunScreenProps {
 export function LiveRunScreen({
   sessionId,
   accessToken,
+  getAccessToken,
   authenticatedGet,
   authenticatedPost,
   userId,
   onFinish,
 }: LiveRunScreenProps) {
+  useKeepAwake("runmate-live-run");
   const [cheerStatus, setCheerStatus] = useState("No cheers yet");
   const [hasFailedCheer, setHasFailedCheer] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
-  const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
+  const [route, setRoute] = useState<GeoPoint[]>([]);
   const [participants, setParticipants] = useState<SessionParticipantSummaryDto[]>([]);
   const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(false);
   const [speechLanguage, setSpeechLanguage] = useState<string>();
@@ -42,7 +47,7 @@ export function LiveRunScreen({
   const [hasSpokenStart, setHasSpokenStart] = useState(false);
   const [nextVoiceMilestoneMeters, setNextVoiceMilestoneMeters] = useState(500);
   const [spokenCheerId, setSpokenCheerId] = useState<string>();
-  const tracker = useLiveRunTracker({ sessionId, userId, accessToken });
+  const tracker = useLiveRunTracker({ sessionId, userId, accessToken, getAccessToken });
   const elapsedLabel = useMemo(() => formatElapsed(tracker.elapsedSeconds), [tracker.elapsedSeconds]);
   const currentPoint = useMemo(() => {
     if (tracker.latitude === undefined || tracker.longitude === undefined) {
@@ -53,6 +58,21 @@ export function LiveRunScreen({
       longitude: tracker.longitude,
     };
   }, [tracker.latitude, tracker.longitude]);
+  const currentRoutePoint = useMemo<GeoPoint | undefined>(() => {
+    if (tracker.latitude === undefined || tracker.longitude === undefined || !tracker.lastLocationAt) {
+      return undefined;
+    }
+    return {
+      latitude: tracker.latitude,
+      longitude: tracker.longitude,
+      accuracyMeters: tracker.accuracyMeters,
+      recordedAt: tracker.lastLocationAt,
+    };
+  }, [tracker.accuracyMeters, tracker.lastLocationAt, tracker.latitude, tracker.longitude]);
+  const displayRoute = useMemo(
+    () => smoothDisplayRoutePoints(route).map((point) => ({ latitude: point.latitude, longitude: point.longitude })),
+    [route],
+  );
   const mapStatus = useMemo(() => {
     if (tracker.permissionStatus === "denied") {
       return "Location permission is disabled.";
@@ -82,8 +102,23 @@ export function LiveRunScreen({
     if (tracker.syncStatus === "error" || tracker.syncStatus === "closed") {
       return "Live sync: offline, tracking locally";
     }
+    if (tracker.syncStatus === "offline") {
+      return "Live sync: offline, run is saved locally";
+    }
     return "Live sync: idle";
   }, [tracker.syncStatus]);
+  const syncBanner = useMemo(() => {
+    if (tracker.syncStatus === "reconnecting") {
+      return `Reconnecting live sync - attempt ${tracker.reconnectAttempt}`;
+    }
+    if (tracker.syncStatus === "offline") {
+      return "Server connection failed - run is saved locally";
+    }
+    if (tracker.pendingLocationUpdates > 0) {
+      return `${tracker.pendingLocationUpdates} route points waiting to sync`;
+    }
+    return undefined;
+  }, [tracker.pendingLocationUpdates, tracker.reconnectAttempt, tracker.syncStatus]);
   const participantRows = useMemo<SessionParticipantSummaryDto[]>(() => {
     const serverRows = participants.length
       ? participants
@@ -190,6 +225,12 @@ export function LiveRunScreen({
   }, [tracker.start]);
 
   useEffect(() => {
+    if (Platform.OS === "android") {
+      ToastAndroid.show("Screen stays awake during this run and may use more battery.", ToastAndroid.LONG);
+    }
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
     let timer: ReturnType<typeof setInterval> | undefined;
     async function loadParticipants() {
@@ -218,17 +259,21 @@ export function LiveRunScreen({
   }, [authenticatedGet, sessionId]);
 
   useEffect(() => {
-    if (!currentPoint) {
+    if (!currentRoutePoint) {
       return;
     }
     setRoute((current) => {
       const previous = current[current.length - 1];
-      if (previous?.latitude === currentPoint.latitude && previous.longitude === currentPoint.longitude) {
+      if (
+        previous?.latitude === currentRoutePoint.latitude &&
+        previous.longitude === currentRoutePoint.longitude &&
+        previous.recordedAt === currentRoutePoint.recordedAt
+      ) {
         return current;
       }
-      return [...current, currentPoint].slice(-1000);
+      return filterDisplayRoutePoints([...current, currentRoutePoint].slice(-1000));
     });
-  }, [currentPoint]);
+  }, [currentRoutePoint]);
 
   useEffect(() => {
     let isMounted = true;
@@ -345,7 +390,7 @@ export function LiveRunScreen({
         }),
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "The API was unavailable when finishing this run.";
+      const message = getFinishErrorMessage(error);
       const pendingResultId = `${sessionId}-${Date.now()}`;
       const pendingResult: RunResultSummary = {
         ...localResult,
@@ -392,10 +437,16 @@ export function LiveRunScreen({
         acceptedPointCount={tracker.acceptedPointCount}
         currentPoint={currentPoint}
         rejectedPointCount={tracker.rejectedPointCount}
-        route={route}
+        route={displayRoute}
         statusText={mapStatus}
         trackingStatusText={distanceTrackingLabel}
       />
+
+      {syncBanner ? (
+        <View style={[styles.syncBanner, tracker.syncStatus === "offline" && styles.syncBannerOffline]}>
+          <Text style={styles.syncBannerText}>{syncBanner}</Text>
+        </View>
+      ) : null}
 
       {tracker.error ? (
         <View style={styles.errorPanel}>
@@ -423,6 +474,10 @@ export function LiveRunScreen({
         <Text style={styles.trackingLine}>{distanceTrackingLabel}</Text>
         <Text style={styles.syncDetail}>
           GPS accepted {tracker.acceptedPointCount} - rejected {tracker.rejectedPointCount}
+        </Text>
+        <Text style={styles.syncDetail}>
+          Speed {tracker.speedMps === undefined ? "--" : tracker.speedMps.toFixed(1)} m/s - reconnects{" "}
+          {tracker.reconnectAttempt}
         </Text>
         {tracker.syncMessage ? <Text style={styles.syncDetail}>{tracker.syncMessage}</Text> : null}
         {tracker.pendingLocationUpdates ? (
@@ -559,6 +614,22 @@ function formatDistanceTrackingStatus(quality: string): string {
   return "Waiting for stable GPS";
 }
 
+function getFinishErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return "The API was unavailable when finishing this run.";
+  }
+  if (error.status === 0) {
+    return "Network connection failed while finishing. This result is kept on this phone.";
+  }
+  if (error.status === 401) {
+    return "Sign-in expired while finishing. This result is kept on this phone.";
+  }
+  if (error.status >= 500) {
+    return "Server error while finishing. This result is kept on this phone.";
+  }
+  return error.message || "This result is kept on this phone until the API is available.";
+}
+
 function formatCheerCode(code: string): string {
   return code
     .split("_")
@@ -609,6 +680,23 @@ const styles = StyleSheet.create({
     color: "#be123c",
     fontSize: 14,
     fontWeight: "700",
+  },
+  syncBanner: {
+    borderRadius: 8,
+    backgroundColor: "#fff7ed",
+    borderWidth: 1,
+    borderColor: "#fed7aa",
+    padding: 12,
+  },
+  syncBannerOffline: {
+    backgroundColor: "#fff1f2",
+    borderColor: "#fecaca",
+  },
+  syncBannerText: {
+    color: "#9a3412",
+    fontSize: 13,
+    fontWeight: "900",
+    textAlign: "center",
   },
   friendPanel: {
     gap: 8,

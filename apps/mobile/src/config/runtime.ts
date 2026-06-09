@@ -1,3 +1,5 @@
+import Constants from "expo-constants";
+
 const DEFAULT_API_URL = "http://localhost:4000";
 
 export const RUNTIME_ENV = process.env.EXPO_PUBLIC_RUNTIME_ENV ?? "development";
@@ -5,6 +7,10 @@ export const API_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL ?? DEFAU
 export const WS_URL = normalizeWebSocketUrl(process.env.EXPO_PUBLIC_WS_URL, API_URL);
 export const ENABLE_DEMO_FALLBACK = process.env.EXPO_PUBLIC_ENABLE_DEMO_FALLBACK === "true";
 export const ENABLE_NATIVE_MAP = process.env.EXPO_PUBLIC_ENABLE_NATIVE_MAP === "true";
+export const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN?.trim() || undefined;
+export const SENTRY_ENABLED = Boolean(SENTRY_DSN);
+export const NATIVE_MAP_API_KEY_CONFIGURED = Boolean(Constants.expoConfig?.extra?.nativeMapApiKeyConfigured);
+export const SENTRY_CONFIGURED = Boolean(Constants.expoConfig?.extra?.sentryConfigured);
 
 export type NetworkScope = "local-device" | "private-lan" | "public" | "unknown";
 

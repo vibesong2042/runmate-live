@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import { ENABLE_NATIVE_MAP } from "../config/runtime";
 
 interface LatLng {
@@ -23,7 +23,18 @@ const DEFAULT_REGION = {
   longitudeDelta: 0.01,
 };
 
-const NativeMaps = ENABLE_NATIVE_MAP ? (require("react-native-maps") as typeof import("react-native-maps")) : undefined;
+const NativeMaps = loadNativeMaps();
+
+function loadNativeMaps(): typeof import("react-native-maps") | undefined {
+  if (!ENABLE_NATIVE_MAP) {
+    return undefined;
+  }
+  try {
+    return require("react-native-maps") as typeof import("react-native-maps");
+  } catch {
+    return undefined;
+  }
+}
 
 export function LiveRunMap({
   currentPoint,
@@ -49,6 +60,7 @@ export function LiveRunMap({
   const MapView = NativeMaps.default;
   const Marker = NativeMaps.Marker;
   const Polyline = NativeMaps.Polyline;
+  const provider = Platform.OS === "android" ? NativeMaps.PROVIDER_GOOGLE : undefined;
   const region = currentPoint
     ? {
         latitude: currentPoint.latitude,
@@ -60,7 +72,7 @@ export function LiveRunMap({
 
   return (
     <View style={styles.container}>
-      <MapView style={styles.map} region={region} showsUserLocation showsMyLocationButton>
+      <MapView style={styles.map} provider={provider} region={region} showsUserLocation showsMyLocationButton>
         {route.length > 1 ? <Polyline coordinates={route} strokeColor="#0f766e" strokeWidth={5} /> : null}
         {currentPoint ? <Marker coordinate={currentPoint} title="You" /> : null}
       </MapView>
