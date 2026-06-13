@@ -137,6 +137,46 @@ Use this when you want repeated tests without keeping this PC as the server.
 
 For a later installable Android preview build, use the `preview` profile in `apps/mobile/eas.json` after Expo/EAS login and project setup.
 
+## Native Google Maps preview build
+
+Use this only after the stable API test works. The normal `preview` APK intentionally keeps native maps off. The `preview-map` APK turns on Google Maps and route polylines.
+
+Google Cloud setup:
+
+1. Enable **Maps SDK for Android** in Google Cloud.
+2. Create an Android app restricted API key.
+3. Use Android package:
+
+   ```text
+   com.papasong.runmatelive
+   ```
+
+4. Add the EAS preview keystore SHA-1 for the package above.
+5. Add the production keystore SHA-1 too if production uses a different keystore.
+6. Restrict API usage to **Maps SDK for Android** only.
+7. Save the key in EAS preview environment variables as:
+
+   ```text
+   ANDROID_GOOGLE_MAPS_API_KEY=<your Google Maps key>
+   ```
+
+Do not put this key in source code, GitHub, screenshots, or shared logs.
+
+Build commands:
+
+```powershell
+cd apps/mobile
+npx.cmd eas-cli build --profile preview --platform android
+npx.cmd eas-cli build --profile preview-map --platform android
+```
+
+Expected behavior:
+
+- `preview` shows the safe live tracking fallback panel.
+- `preview-map` shows Google map tiles, your current marker, and the accepted route line.
+- If `preview-map` is built without `ANDROID_GOOGLE_MAPS_API_KEY`, the app shows the fallback tracking panel and the diagnostics screen should report that the map key is not configured.
+- When two runners are more than 50 km apart, the live screen uses Together View by default. It shows each runner's local mini-map, an overview map for city-level context, and a My Map view for the local detailed route.
+
 ## One-command external test
 
 On this Windows workspace, this command starts the API, creates a Cloudflare quick tunnel for the API, starts Expo's official tunnel for Expo Go, updates `apps/mobile/.env`, and prints the Expo Go URL.

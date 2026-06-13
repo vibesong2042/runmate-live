@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Platform, ScrollView, StyleSheet, Text, ToastAndroid, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, ToastAndroid, View } from "react-native";
 import * as Speech from "expo-speech";
 import { useKeepAwake } from "expo-keep-awake";
 import { filterDisplayRoutePoints, formatPace, smoothDisplayRoutePoints, type GeoPoint } from "@runmate/shared";
@@ -9,7 +9,7 @@ import {
   type RunningSessionResponseDto,
   type SessionParticipantSummaryDto,
 } from "../api/client";
-import { LiveRunMap } from "../components/LiveRunMap";
+import { LiveRunMap, type LatLng, type MapPin } from "../components/LiveRunMap";
 import { MetricTile } from "../components/MetricTile";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useLiveRunTracker } from "../hooks/useLiveRunTracker";
@@ -26,6 +26,11 @@ interface LiveRunScreenProps {
   onFinish: (result: RunResultSummary) => void;
 }
 
+type LiveMapMode = "together" | "overview" | "mine";
+
+const LONG_DISTANCE_GROUP_THRESHOLD_METERS = 50_000;
+const MAX_ROUTE_POINTS = 1000;
+
 export function LiveRunScreen({
   sessionId,
   accessToken,
@@ -39,7 +44,9 @@ export function LiveRunScreen({
   const [cheerStatus, setCheerStatus] = useState("No cheers yet");
   const [hasFailedCheer, setHasFailedCheer] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [mapMode, setMapMode] = useState<LiveMapMode>("together");
   const [route, setRoute] = useState<GeoPoint[]>([]);
+  const [remoteRoutes, setRemoteRoutes] = useState<Record<string, GeoPoint[]>>({});
   const [participants, setParticipants] = useState<SessionParticipantSummaryDto[]>([]);
   const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(false);
   const [speechLanguage, setSpeechLanguage] = useState<string>();
@@ -72,6 +79,19 @@ export function LiveRunScreen({
   const displayRoute = useMemo(
     () => smoothDisplayRoutePoints(route).map((point) => ({ latitude: point.latitude, longitude: point.longitude })),
     [route],
+  );
+  const remoteDisplayRoutes = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(remoteRoutes).map(([remoteUserId, remoteRoute]) => [
+          remoteUserId,
+          smoothDisplayRoutePoints(remoteRoute).map((point) => ({
+            latitude: point.latitude,
+            longitude: point.longitude,
+          })),
+        ]),
+      ) as Record<string, LatLng[]>,
+    [remoteRoutes],
   );
   const mapStatus = useMemo(() => {
     if (tracker.permissionStatus === "denied") {
@@ -186,6 +206,51 @@ export function LiveRunScreen({
         .sort((a, b) => b.totalDistanceMeters - a.totalDistanceMeters)[0],
     [participantRows, userId],
   );
+  const remoteMapParticipants = useMemo(
+    () =>
+      participantRows
+        .filter((participant) => participant.userId !== userId)
+        .map((participant) => {
+          const remote = tracker.remoteLocations[participant.userId];
+          const current: LatLng | undefined = remote
+            ? {
+                latitude: remote.latitude,
+                longitude: remote.longitude,
+              }
+            : undefined;
+          return {
+            current,
+            participant,
+            route: remoteDisplayRoutes[participant.userId] ?? [],
+          };
+        }),
+    [participantRows, remoteDisplayRoutes, tracker.remoteLocations, userId],
+  );
+  const primaryRemoteMapParticipant = useMemo(
+    () => remoteMapParticipants.find((item) => item.current) ?? remoteMapParticipants[0],
+    [remoteMapParticipants],
+  );
+  const isLongDistanceGroup = useMemo(() => {
+    if (!currentPoint) {
+      return false;
+    }
+    return remoteMapParticipants.some(
+      (item) => item.current && calculateDistanceMeters(currentPoint, item.current) >= LONG_DISTANCE_GROUP_THRESHOLD_METERS,
+    );
+  }, [currentPoint, remoteMapParticipants]);
+  const overviewPins = useMemo<MapPin[]>(
+    () =>
+      remoteMapParticipants
+        .filter((item): item is typeof item & { current: LatLng } => Boolean(item.current))
+        .map((item) => ({
+          id: item.participant.userId,
+          coordinate: item.current,
+          label: item.participant.nickname,
+        })),
+    [remoteMapParticipants],
+  );
+  const localProgressRatio = tracker.distanceMeters / 5000;
+  const primaryRemoteProgressRatio = (primaryRemoteMapParticipant?.participant.totalDistanceMeters ?? 0) / 5000;
   const latestCheerLabel = useMemo(() => {
     if (!tracker.latestCheer) {
       return undefined;
@@ -271,9 +336,42 @@ export function LiveRunScreen({
       ) {
         return current;
       }
-      return filterDisplayRoutePoints([...current, currentRoutePoint].slice(-1000));
+      return filterDisplayRoutePoints([...current, currentRoutePoint].slice(-MAX_ROUTE_POINTS));
     });
   }, [currentRoutePoint]);
+
+  useEffect(() => {
+    const remotes = Object.values(tracker.remoteLocations);
+    if (!remotes.length) {
+      return;
+    }
+    setRemoteRoutes((current) => {
+      let next = current;
+      for (const remote of remotes) {
+        const point: GeoPoint = {
+          latitude: remote.latitude,
+          longitude: remote.longitude,
+          accuracyMeters: remote.accuracyMeters,
+          recordedAt: remote.lastUpdatedAt,
+        };
+        const existing = current[remote.userId] ?? [];
+        const previous = existing[existing.length - 1];
+        if (
+          previous?.latitude === point.latitude &&
+          previous.longitude === point.longitude &&
+          previous.recordedAt === point.recordedAt
+        ) {
+          continue;
+        }
+        const filtered = filterDisplayRoutePoints([...existing, point].slice(-MAX_ROUTE_POINTS));
+        next = {
+          ...next,
+          [remote.userId]: filtered,
+        };
+      }
+      return next;
+    });
+  }, [tracker.remoteLocations]);
 
   useEffect(() => {
     let isMounted = true;
@@ -433,14 +531,87 @@ export function LiveRunScreen({
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <LiveRunMap
-        acceptedPointCount={tracker.acceptedPointCount}
-        currentPoint={currentPoint}
-        rejectedPointCount={tracker.rejectedPointCount}
-        route={displayRoute}
-        statusText={mapStatus}
-        trackingStatusText={distanceTrackingLabel}
-      />
+      {isLongDistanceGroup ? (
+        <View style={styles.mapPanel}>
+          <View style={styles.mapPanelHeader}>
+            <View>
+              <Text style={styles.mapPanelTitle}>Together View</Text>
+              <Text style={styles.mapPanelSubTitle}>
+                {primaryRemoteMapParticipant?.current && currentPoint
+                  ? `${(calculateDistanceMeters(currentPoint, primaryRemoteMapParticipant.current) / 1000).toFixed(
+                      0,
+                    )} km apart - ${elapsedLabel}`
+                  : `Shared timer - ${elapsedLabel}`}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.mapModeTabs}>
+            <MapModeButton active={mapMode === "together"} label="Together" onPress={() => setMapMode("together")} />
+            <MapModeButton active={mapMode === "overview"} label="Overview" onPress={() => setMapMode("overview")} />
+            <MapModeButton active={mapMode === "mine"} label="My Map" onPress={() => setMapMode("mine")} />
+          </View>
+          {mapMode === "together" ? (
+            <View style={styles.runnerCards}>
+              <RunnerMapCard
+                currentPoint={currentPoint}
+                distanceMeters={tracker.distanceMeters}
+                label="You"
+                paceSecPerKm={tracker.averagePaceSecPerKm}
+                progressRatio={localProgressRatio}
+                route={displayRoute}
+                statusText={mapStatus}
+                trackingStatusText={distanceTrackingLabel}
+              />
+              {primaryRemoteMapParticipant ? (
+                <RunnerMapCard
+                  currentPoint={primaryRemoteMapParticipant.current}
+                  distanceMeters={primaryRemoteMapParticipant.participant.totalDistanceMeters}
+                  label={primaryRemoteMapParticipant.participant.nickname}
+                  paceSecPerKm={primaryRemoteMapParticipant.participant.averagePaceSecPerKm}
+                  progressRatio={primaryRemoteProgressRatio}
+                  route={primaryRemoteMapParticipant.route}
+                  statusText={
+                    primaryRemoteMapParticipant.current
+                      ? `Last seen ${primaryRemoteMapParticipant.participant.lastLocationAt?.slice(11, 19) ?? "now"}`
+                      : "Waiting for friend GPS"
+                  }
+                  trackingStatusText="Friend route uses accepted live points"
+                />
+              ) : null}
+            </View>
+          ) : mapMode === "overview" ? (
+            <LiveRunMap
+              currentPoint={currentPoint}
+              mode="overview"
+              pins={overviewPins}
+              route={[]}
+              showRoute={false}
+              statusText="Overview only"
+              title="Group Overview"
+              trackingStatusText="Detailed routes are unavailable in overview."
+            />
+          ) : (
+            <LiveRunMap
+              acceptedPointCount={tracker.acceptedPointCount}
+              currentPoint={currentPoint}
+              rejectedPointCount={tracker.rejectedPointCount}
+              route={displayRoute}
+              statusText={mapStatus}
+              title="My Route"
+              trackingStatusText={distanceTrackingLabel}
+            />
+          )}
+        </View>
+      ) : (
+        <LiveRunMap
+          acceptedPointCount={tracker.acceptedPointCount}
+          currentPoint={currentPoint}
+          rejectedPointCount={tracker.rejectedPointCount}
+          route={displayRoute}
+          statusText={mapStatus}
+          trackingStatusText={distanceTrackingLabel}
+        />
+      )}
 
       {syncBanner ? (
         <View style={[styles.syncBanner, tracker.syncStatus === "offline" && styles.syncBannerOffline]}>
@@ -481,7 +652,7 @@ export function LiveRunScreen({
         </Text>
         {tracker.syncMessage ? <Text style={styles.syncDetail}>{tracker.syncMessage}</Text> : null}
         {tracker.pendingLocationUpdates ? (
-          <Text style={styles.syncDetail}>1 latest route point is waiting to sync.</Text>
+          <Text style={styles.syncDetail}>{tracker.pendingLocationUpdates} route points are waiting to sync.</Text>
         ) : null}
         {voiceFeedbackEnabled ? <Text style={styles.voiceLine}>{voiceStatus}</Text> : null}
         {latestCheerLabel ? <Text style={styles.cheerLine}>{latestCheerLabel}</Text> : null}
@@ -511,6 +682,60 @@ export function LiveRunScreen({
         <PrimaryButton label={isFinishing ? "Finishing..." : "Finish"} variant="danger" onPress={finishRun} />
       </View>
     </ScrollView>
+  );
+}
+
+function MapModeButton({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) {
+  return (
+    <Pressable style={[styles.mapModeButton, active && styles.mapModeButtonActive]} onPress={onPress}>
+      <Text style={[styles.mapModeButtonText, active && styles.mapModeButtonTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function RunnerMapCard({
+  currentPoint,
+  distanceMeters,
+  label,
+  paceSecPerKm,
+  progressRatio,
+  route,
+  statusText,
+  trackingStatusText,
+}: {
+  currentPoint?: LatLng;
+  distanceMeters: number;
+  label: string;
+  paceSecPerKm?: number;
+  progressRatio: number;
+  route: LatLng[];
+  statusText: string;
+  trackingStatusText: string;
+}) {
+  const clampedProgress = Math.min(1, Math.max(0, progressRatio));
+  return (
+    <View style={styles.runnerCard}>
+      <View style={styles.runnerCardHeader}>
+        <View>
+          <Text style={styles.runnerCardName}>{label}</Text>
+          <Text style={styles.runnerCardStats}>
+            {(distanceMeters / 1000).toFixed(2)} km - {formatPace(paceSecPerKm)}/km
+          </Text>
+        </View>
+        <Text style={styles.runnerCardPercent}>{Math.round(clampedProgress * 100)}%</Text>
+      </View>
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${clampedProgress * 100}%` }]} />
+      </View>
+      <LiveRunMap
+        currentPoint={currentPoint}
+        mode="mini"
+        route={route}
+        statusText={statusText}
+        title={label}
+        trackingStatusText={trackingStatusText}
+      />
+    </View>
   );
 }
 
@@ -595,6 +820,23 @@ function normalizeParticipantStatus(status?: string): SessionParticipantSummaryD
   return undefined;
 }
 
+function calculateDistanceMeters(from: LatLng, to: LatLng): number {
+  const earthRadiusMeters = 6371000;
+  const dLat = degreesToRadians(to.latitude - from.latitude);
+  const dLng = degreesToRadians(to.longitude - from.longitude);
+  const lat1 = degreesToRadians(from.latitude);
+  const lat2 = degreesToRadians(to.latitude);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusMeters * c;
+}
+
+function degreesToRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
 function formatElapsed(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -663,6 +905,100 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     gap: 12,
+  },
+  mapPanel: {
+    gap: 12,
+    borderRadius: 8,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    padding: 12,
+  },
+  mapPanelHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  mapPanelTitle: {
+    color: "#0f172a",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  mapPanelSubTitle: {
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  mapModeTabs: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  mapModeButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#ffffff",
+  },
+  mapModeButtonActive: {
+    borderColor: "#0f766e",
+    backgroundColor: "#0f766e",
+  },
+  mapModeButtonText: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  mapModeButtonTextActive: {
+    color: "#ffffff",
+  },
+  runnerCards: {
+    gap: 12,
+  },
+  runnerCard: {
+    gap: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+    padding: 10,
+  },
+  runnerCardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  runnerCardName: {
+    color: "#0f172a",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  runnerCardStats: {
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  runnerCardPercent: {
+    color: "#0f766e",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  progressTrack: {
+    height: 8,
+    overflow: "hidden",
+    borderRadius: 8,
+    backgroundColor: "#dbeafe",
+  },
+  progressFill: {
+    height: 8,
+    borderRadius: 8,
+    backgroundColor: "#0f766e",
   },
   metricsRow: {
     flexDirection: "row",

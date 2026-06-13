@@ -70,6 +70,8 @@ RunMate is a running tracker, not a general vehicle movement tracker. GPS points
 
 Use `eas build --profile preview --platform android` for the safe fallback map APK. Use `eas build --profile preview-map --platform android` only after setting `ANDROID_GOOGLE_MAPS_API_KEY` for the Android package `com.papasong.runmatelive`.
 
+The `preview-map` profile requires a Google Cloud key with Maps SDK for Android enabled. Register both the preview keystore SHA-1 and production keystore SHA-1 when they differ, restrict the key to package `com.papasong.runmatelive`, and expose it to EAS as `ANDROID_GOOGLE_MAPS_API_KEY`. The key must not be committed to this repository. If the key is missing, RunMate falls back to the live tracking panel instead of crashing.
+
 For a real group running test:
 
 1. Start the API with `npm.cmd run dev:api`.

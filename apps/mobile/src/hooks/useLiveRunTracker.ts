@@ -61,6 +61,8 @@ export interface RemoteParticipantLocation {
   userId: string;
   latitude: number;
   longitude: number;
+  accuracyMeters?: number;
+  speedMps?: number;
   distanceMeters: number;
   state: "running" | "paused" | "finished" | "lost_signal";
   currentPaceSecPerKm?: number;
@@ -197,6 +199,8 @@ export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessTok
               userId: event.userId,
               latitude: event.payload.latitude,
               longitude: event.payload.longitude,
+              accuracyMeters: event.payload.accuracyMeters,
+              speedMps: event.payload.speedMps,
               distanceMeters: event.payload.distanceMeters,
               state: event.payload.state,
               currentPaceSecPerKm: event.payload.currentPaceSecPerKm,
