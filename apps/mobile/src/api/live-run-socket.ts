@@ -12,6 +12,7 @@ export interface LiveRunSocketStatusUpdate {
   status: LiveRunSocketStatus;
   attempt: number;
   message: string;
+  closeCode?: number;
 }
 
 interface LiveRunSocketConnectParams {
@@ -111,39 +112,40 @@ export class LiveRunSocket {
       }
       this.emitStatus("error", `Live sync error while connecting to ${WS_URL}`);
     };
-    this.socket.onclose = () => {
+    this.socket.onclose = (event) => {
       if (connectionId !== this.connectionId) {
         return;
       }
       if (this.closeRequested) {
-        this.emitStatus("closed", "Live sync closed");
+        this.emitStatus("closed", "Live sync closed", event.code);
         return;
       }
-      this.scheduleReconnect();
+      this.scheduleReconnect(event.code);
     };
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(closeCode?: number): void {
     if (!this.params || this.closeRequested) {
       return;
     }
     this.reconnectAttempt += 1;
     if (hasExceededReconnectAttempts(this.reconnectAttempt)) {
-      this.emitStatus("offline", "Server connection failed - run is saved locally");
+      this.emitStatus("offline", "Server connection failed - run is saved locally", closeCode);
       return;
     }
     const delayMs = calculateReconnectDelayMs(this.reconnectAttempt);
-    this.emitStatus("reconnecting", `Live sync disconnected. Retrying in ${Math.round(delayMs / 1000)}s`);
+    this.emitStatus("reconnecting", `Live sync disconnected. Retrying in ${Math.round(delayMs / 1000)}s`, closeCode);
     this.reconnectTimer = setTimeout(() => {
       void this.openSocket("reconnecting");
     }, delayMs);
   }
 
-  private emitStatus(status: LiveRunSocketStatus, message: string): void {
+  private emitStatus(status: LiveRunSocketStatus, message: string, closeCode?: number): void {
     this.params?.onStatus?.({
       status,
       attempt: this.reconnectAttempt,
       message,
+      closeCode,
     });
   }
 }

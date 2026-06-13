@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { ApiError, type FriendSummaryDto } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { classifyApiError } from "../utils/error-messages";
 
 interface FriendsScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
@@ -134,6 +135,10 @@ export function FriendsScreen({ authenticatedGet, authenticatedPost, onStartRun 
 }
 
 function getInviteAcceptErrorMessage(error: unknown): string {
+  const classified = classifyApiError(error, "Could not accept invite.");
+  if (classified.kind === "network" || classified.kind === "timeout" || classified.kind === "rate_limit") {
+    return classified.message;
+  }
   if (!(error instanceof ApiError)) {
     return "Could not accept invite. Try again.";
   }
@@ -147,7 +152,10 @@ function getInviteAcceptErrorMessage(error: unknown): string {
     return error.message || "Invite code is not valid.";
   }
   if (error.status === 0) {
-    return "API connection failed. Check your internet connection.";
+    return classified.message;
+  }
+  if (error.status >= 500) {
+    return classified.message;
   }
   return "Could not accept invite. Check the code and API connection.";
 }

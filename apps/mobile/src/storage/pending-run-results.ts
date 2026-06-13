@@ -9,7 +9,10 @@ export interface PendingRunResult {
   sessionId: string;
   result: RunResultSummary;
   createdAt: string;
+  retryCount?: number;
+  lastRetryAt?: string;
   lastError?: string;
+  autoRetryDisabled?: boolean;
 }
 
 export async function loadPendingRunResults(userId?: string): Promise<PendingRunResult[]> {
@@ -31,6 +34,10 @@ export async function savePendingRunResult(entry: PendingRunResult): Promise<voi
   const entries = await loadPendingRunResults();
   const withoutDuplicate = entries.filter((item) => item.id !== entry.id);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([entry, ...withoutDuplicate].slice(0, 10)));
+}
+
+export async function updatePendingRunResult(entry: PendingRunResult): Promise<void> {
+  await savePendingRunResult(entry);
 }
 
 export async function removePendingRunResult(id: string): Promise<void> {

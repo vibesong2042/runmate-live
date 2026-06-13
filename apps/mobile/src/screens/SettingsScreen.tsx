@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import * as Battery from "expo-battery";
+import * as Clipboard from "expo-clipboard";
 import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import {
   API_URL,
@@ -10,8 +11,17 @@ import {
   WS_URL,
 } from "../config/runtime";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { captureDiagnosticError } from "../monitoring/sentry";
+import { addDiagnosticBreadcrumb, captureDiagnosticError } from "../monitoring/sentry";
+import { buildDiagnosticReport } from "../utils/diagnostic-report";
+import {
+  BETA_CHECKLIST_ITEMS,
+  loadBetaChecklist,
+  resetBetaChecklist,
+  saveBetaChecklist,
+  type BetaChecklistState,
+} from "../storage/beta-checklist";
 import { loadLiveRunDiagnostics, type LiveRunDiagnostics } from "../storage/live-run-diagnostics";
+import type { PendingRunResult } from "../storage/pending-run-results";
 
 interface SettingsScreenProps {
   authStatus?: {
@@ -19,13 +29,25 @@ interface SettingsScreenProps {
     runnerId?: string;
     isDemoMode: boolean;
   };
+  isRetryingPendingSave?: boolean;
+  onRetryPendingSave?: () => void;
+  pendingResults?: PendingRunResult[];
+  pendingSaveStatus?: string;
 }
 
-export function SettingsScreen({ authStatus }: SettingsScreenProps) {
+export function SettingsScreen({
+  authStatus,
+  isRetryingPendingSave = false,
+  onRetryPendingSave,
+  pendingResults = [],
+  pendingSaveStatus,
+}: SettingsScreenProps) {
   const [defaultShare, setDefaultShare] = useState(true);
   const [voice, setVoice] = useState(true);
   const [safety, setSafety] = useState(true);
+  const [checklist, setChecklist] = useState<BetaChecklistState>();
   const [diagnostics, setDiagnostics] = useState<LiveRunDiagnostics>();
+  const [diagnosticReportStatus, setDiagnosticReportStatus] = useState("Report not copied yet");
   const [sentryStatus, setSentryStatus] = useState(SENTRY_ENABLED ? "Sentry ready" : "Sentry disabled");
   const powerState = Battery.usePowerState();
 
@@ -47,6 +69,49 @@ export function SettingsScreen({ authStatus }: SettingsScreenProps) {
       clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadBetaChecklist()
+      .then((loaded) => {
+        if (isMounted) {
+          setChecklist(loaded);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  async function copyDiagnosticReport() {
+    const report = await buildDiagnosticReport({
+      authStatus,
+      pendingResults,
+    });
+    await Clipboard.setStringAsync(report);
+    addDiagnosticBreadcrumb("diagnostic_report_copied");
+    setDiagnosticReportStatus("Diagnostic report copied. Send it by KakaoTalk with a screenshot.");
+  }
+
+  async function toggleChecklistItem(id: keyof BetaChecklistState) {
+    const current = checklist ?? (await loadBetaChecklist());
+    const next: BetaChecklistState = {
+      ...current,
+      [id]: current[id]?.checked
+        ? { checked: false }
+        : {
+            checked: true,
+            checkedAt: new Date().toISOString(),
+          },
+    };
+    setChecklist(next);
+    await saveBetaChecklist(next);
+  }
+
+  async function resetChecklist() {
+    setChecklist(await resetBetaChecklist());
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -88,6 +153,58 @@ export function SettingsScreen({ authStatus }: SettingsScreenProps) {
           variant="secondary"
           onPress={() => setSentryStatus(captureDiagnosticError())}
         />
+        <PrimaryButton label="Copy Diagnostic Report" variant="secondary" onPress={() => void copyDiagnosticReport()} />
+        <Text style={styles.helperText}>{diagnosticReportStatus}</Text>
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Beta Test Checklist</Text>
+        <Text style={styles.body}>카카오톡 제보 형식: N번 항목 / 증상 한 줄 / 진단 리포트 / 화면 캡처</Text>
+        {BETA_CHECKLIST_ITEMS.map((item, index) => {
+          const state = checklist?.[item.id];
+          return (
+            <View key={item.id} style={styles.checklistItem}>
+              <View style={styles.checklistCopy}>
+                <Text style={styles.checklistLabel}>
+                  {index + 1}. {item.label}
+                </Text>
+                <Text style={styles.checklistMeta}>
+                  {state?.checked ? `Checked ${formatDateTime(state.checkedAt)}` : "Not checked yet"}
+                </Text>
+              </View>
+              <View style={styles.checklistActions}>
+                <PrimaryButton
+                  label={state?.checked ? "Undo" : "Check"}
+                  variant={state?.checked ? "secondary" : "primary"}
+                  onPress={() => void toggleChecklistItem(item.id)}
+                />
+                {!state?.checked ? (
+                  <PrimaryButton label="Copy Report" variant="secondary" onPress={() => void copyDiagnosticReport()} />
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+        <PrimaryButton label="Reset Checklist" variant="danger" onPress={() => void resetChecklist()} />
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Pending Saves</Text>
+        <DiagnosticsRow label="Pending Results" value={`${pendingResults.length}`} />
+        <DiagnosticsRow
+          label="Auto Retry Stopped"
+          value={`${pendingResults.filter((result) => result.autoRetryDisabled).length}`}
+        />
+        {pendingSaveStatus ? <Text style={styles.helperText}>{pendingSaveStatus}</Text> : null}
+        <Text style={styles.body}>Pending results are kept on this phone. They are lost if the app is reinstalled.</Text>
+        {pendingResults.length > 0 && onRetryPendingSave ? (
+          <PrimaryButton
+            disabled={isRetryingPendingSave}
+            label={isRetryingPendingSave ? "Retrying..." : "Retry Now"}
+            variant="secondary"
+            onPress={onRetryPendingSave}
+          />
+        ) : null}
       </View>
     </ScrollView>
   );
@@ -177,6 +294,35 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontSize: 14,
     lineHeight: 21,
+  },
+  helperText: {
+    color: "#0f766e",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  checklistItem: {
+    gap: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+    padding: 12,
+  },
+  checklistCopy: {
+    gap: 3,
+  },
+  checklistLabel: {
+    color: "#0f172a",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  checklistMeta: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  checklistActions: {
+    gap: 8,
   },
   diagnosticsRow: {
     gap: 4,

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { AppState, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from "react-native";
+import * as Network from "expo-network";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { FriendsScreen } from "./src/screens/FriendsScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
@@ -10,10 +11,16 @@ import { ResultScreen, type RunResultSummary } from "./src/screens/ResultScreen"
 import { RunSetupScreen } from "./src/screens/RunSetupScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { useAuthSession } from "./src/hooks/useAuthSession";
-import { loadPendingRunResults, removePendingRunResult, savePendingRunResult } from "./src/storage/pending-run-results";
+import {
+  loadPendingRunResults,
+  removePendingRunResult,
+  savePendingRunResult,
+  type PendingRunResult,
+} from "./src/storage/pending-run-results";
 import type { AppScreen } from "./src/state/app-state";
 import { ApiError } from "./src/api/client";
 import { initializeSentry, withSentry } from "./src/monitoring/sentry";
+import { classifyApiError } from "./src/utils/error-messages";
 
 initializeSentry();
 
@@ -40,36 +47,133 @@ function AppShell() {
   const [activeSessionId, setActiveSessionId] = useState<string>();
   const [lastRunResult, setLastRunResult] = useState<RunResultSummary>();
   const [isRetryingSave, setIsRetryingSave] = useState(false);
+  const [pendingResults, setPendingResults] = useState<PendingRunResult[]>([]);
+  const [pendingSaveStatus, setPendingSaveStatus] = useState<string>();
   const [homeError, setHomeError] = useState<string>();
   const auth = useAuthSession();
 
+  const refreshPendingResults = useCallback(async () => {
+    if (!auth.session) {
+      setPendingResults([]);
+      return [];
+    }
+    const results = await loadPendingRunResults(auth.session.user.id);
+    setPendingResults(results);
+    return results;
+  }, [auth.session]);
+
+  const retryPendingEntry = useCallback(
+    async (entry: PendingRunResult, automatic = false) => {
+      if (!entry.sessionId || !auth.session) {
+        return false;
+      }
+      if (automatic && (entry.autoRetryDisabled || (entry.retryCount ?? 0) >= 3)) {
+        if (!entry.autoRetryDisabled) {
+          await savePendingRunResult({ ...entry, autoRetryDisabled: true });
+          await refreshPendingResults();
+        }
+        return false;
+      }
+
+      setIsRetryingSave(true);
+      setPendingSaveStatus(automatic ? "Retrying pending save automatically..." : "Retrying pending save...");
+      try {
+        await auth.authenticatedPost(`/running-sessions/${entry.sessionId}/finish`, {});
+        await removePendingRunResult(entry.id);
+        await refreshPendingResults();
+        if (lastRunResult?.pendingResultId === entry.id) {
+          setLastRunResult({
+            ...lastRunResult,
+            pendingResultId: undefined,
+            saveError: undefined,
+            saveStatus: "saved",
+          });
+        }
+        setPendingSaveStatus("Run result saved.");
+        showToast("Run result saved.");
+        return true;
+      } catch (error) {
+        const classified = classifyApiError(error, "The API is still unavailable.");
+        const retryCount = (entry.retryCount ?? 0) + 1;
+        const nextEntry: PendingRunResult = {
+          ...entry,
+          autoRetryDisabled: retryCount >= 3,
+          lastError: classified.message,
+          lastRetryAt: new Date().toISOString(),
+          retryCount,
+          result: {
+            ...entry.result,
+            saveError: classified.message,
+            saveStatus: "failed",
+          },
+        };
+        await savePendingRunResult(nextEntry);
+        await refreshPendingResults();
+        setPendingSaveStatus(
+          nextEntry.autoRetryDisabled
+            ? "Automatic retry stopped. Use Retry Now when the server is available."
+            : classified.message,
+        );
+        return false;
+      } finally {
+        setIsRetryingSave(false);
+      }
+    },
+    [auth, lastRunResult, refreshPendingResults],
+  );
+
+  const retryFirstPendingSave = useCallback(
+    async (automatic = false) => {
+      const entries = pendingResults.length ? pendingResults : await refreshPendingResults();
+      const target = entries.find((entry) => !automatic || !entry.autoRetryDisabled);
+      if (!target) {
+        setPendingSaveStatus("No pending run results.");
+        return;
+      }
+      await retryPendingEntry(target, automatic);
+    },
+    [pendingResults, refreshPendingResults, retryPendingEntry],
+  );
+
   useEffect(() => {
     let isMounted = true;
-    async function loadPendingResult() {
-      if (!hasOnboarded || !auth.session || lastRunResult?.pendingResultId) {
+    async function loadPendingResults() {
+      if (!hasOnboarded || !auth.session) {
         return;
       }
-
-      const pendingResults = await loadPendingRunResults(auth.session.user.id);
-      const pending = pendingResults[0];
-      if (!isMounted || !pending) {
-        return;
+      const results = await loadPendingRunResults(auth.session.user.id);
+      if (isMounted) {
+        setPendingResults(results);
       }
-
-      setLastRunResult({
-        ...pending.result,
-        pendingResultId: pending.id,
-        saveStatus: pending.result.saveStatus ?? "pending",
-        sessionId: pending.sessionId,
-      });
-      setScreen("result");
     }
 
-    void loadPendingResult();
+    void loadPendingResults();
     return () => {
       isMounted = false;
     };
-  }, [auth.session, hasOnboarded, lastRunResult?.pendingResultId]);
+  }, [auth.session, hasOnboarded]);
+
+  useEffect(() => {
+    if (!hasOnboarded || !auth.session) {
+      return;
+    }
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        return;
+      }
+      void Network.getNetworkStateAsync().then((networkState) => {
+        if (networkState.isConnected) {
+          void retryFirstPendingSave(true);
+        }
+      });
+    });
+    void Network.getNetworkStateAsync().then((networkState) => {
+      if (networkState.isConnected) {
+        void retryFirstPendingSave(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [auth.session, hasOnboarded, retryFirstPendingSave]);
 
   const retryPendingResultSave = useCallback(
     async (result: RunResultSummary) => {
@@ -80,14 +184,10 @@ function AppShell() {
       setIsRetryingSave(true);
       setLastRunResult({ ...result, saveStatus: "retrying" });
       try {
-        await auth.authenticatedPost(`/running-sessions/${result.sessionId}/finish`, {});
-        await removePendingRunResult(result.pendingResultId);
-        setLastRunResult({
-          ...result,
-          pendingResultId: undefined,
-          saveError: undefined,
-          saveStatus: "saved",
-        });
+        const pending = (await loadPendingRunResults(auth.session.user.id)).find((entry) => entry.id === result.pendingResultId);
+        if (pending) {
+          await retryPendingEntry(pending, false);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "The API is still unavailable.";
         const failedResult: RunResultSummary = {
@@ -102,13 +202,15 @@ function AppShell() {
           sessionId: result.sessionId,
           result: failedResult,
           createdAt: new Date().toISOString(),
+          lastRetryAt: new Date().toISOString(),
           lastError: message,
+          retryCount: 1,
         });
       } finally {
         setIsRetryingSave(false);
       }
     },
-    [auth],
+    [auth, retryPendingEntry],
   );
 
   const activeScreen = useMemo(() => {
@@ -132,6 +234,7 @@ function AppShell() {
         <HomeScreen
           authenticatedGet={auth.authenticatedGet}
           error={homeError}
+          isRetryingPendingSave={isRetryingSave}
           onJoinSession={async (sessionId) => {
             setHomeError(undefined);
             try {
@@ -143,6 +246,9 @@ function AppShell() {
             }
           }}
           onNavigate={setScreen}
+          onRetryPendingSave={() => void retryFirstPendingSave(false)}
+          pendingSaveStatus={pendingSaveStatus}
+          pendingRunResultCount={pendingResults.length}
         />
       );
     }
@@ -202,8 +308,28 @@ function AppShell() {
     if (screen === "profile") {
       return <ProfileScreen authenticatedGet={auth.authenticatedGet} />;
     }
-    return <SettingsScreen authStatus={auth.authStatus} />;
-  }, [activeSessionId, auth, hasOnboarded, homeError, isRetryingSave, lastRunResult, retryPendingResultSave, screen]);
+    return (
+      <SettingsScreen
+        authStatus={auth.authStatus}
+        isRetryingPendingSave={isRetryingSave}
+        onRetryPendingSave={() => void retryFirstPendingSave(false)}
+        pendingResults={pendingResults}
+        pendingSaveStatus={pendingSaveStatus}
+      />
+    );
+  }, [
+    activeSessionId,
+    auth,
+    hasOnboarded,
+    homeError,
+    isRetryingSave,
+    lastRunResult,
+    pendingResults,
+    pendingSaveStatus,
+    retryFirstPendingSave,
+    retryPendingResultSave,
+    screen,
+  ]);
 
   return (
     <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
@@ -227,6 +353,10 @@ function AppShell() {
 }
 
 function getJoinErrorMessage(error: unknown): string {
+  const classified = classifyApiError(error, "Could not join the running session.");
+  if (classified.kind !== "unknown") {
+    return classified.message;
+  }
   if (!(error instanceof ApiError)) {
     return "Could not join the running session. Try again.";
   }
@@ -243,6 +373,12 @@ function getJoinErrorMessage(error: unknown): string {
     return "Server error while joining the run. Try again in a moment.";
   }
   return error.message || "Could not join the running session.";
+}
+
+function showToast(message: string): void {
+  if (Platform.OS === "android") {
+    ToastAndroid.show(message, ToastAndroid.SHORT);
+  }
 }
 
 const styles = StyleSheet.create({

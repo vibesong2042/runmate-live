@@ -202,6 +202,40 @@ Ask each tester to do this:
 9. Press `Send Cheer`.
 10. Finish the run and confirm the result says `Result saved`.
 
+## Tester bug reports
+
+Supported beta devices:
+
+- Android 11 or newer.
+- Precise location permission enabled.
+- Internet access through Wi-Fi or mobile data.
+
+When an error happens, ask the tester to send the report through KakaoTalk.
+
+Report format:
+
+```text
+N번 항목 / 증상 한 줄 / 진단 리포트 붙여넣기 / 화면 캡처 첨부
+```
+
+How to collect the diagnostic report:
+
+1. Open RunMate Live.
+2. Go to Settings.
+3. Open `Beta Diagnostics`.
+4. Press `Copy Diagnostic Report`.
+5. Paste the copied text into KakaoTalk.
+6. Attach a screenshot that includes the visible error message.
+
+The diagnostic report includes app version, build mode, device model, OS version, API/WS target, map status, recent GPS quality, pending save count, WebSocket status, and the last API error. It must not include access tokens, refresh tokens, database URLs, JWT secrets, or Google Maps API keys.
+
+If a run result is waiting to save:
+
+- Do not reinstall the app before retrying the save.
+- Open Home and press `Retry Now`.
+- If automatic retry stops after repeated failures, use Settings > Pending Saves > `Retry Now`.
+- Pending results are stored on this phone only and are lost if the app is reinstalled.
+
 ## Failure checks
 
 If sign-in fails:

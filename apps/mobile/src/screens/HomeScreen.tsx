@@ -8,11 +8,24 @@ import type { AppScreen } from "../state/app-state";
 interface HomeScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
   error?: string;
+  isRetryingPendingSave?: boolean;
   onJoinSession: (sessionId: string) => Promise<void>;
   onNavigate: (screen: AppScreen) => void;
+  onRetryPendingSave?: () => void;
+  pendingRunResultCount?: number;
+  pendingSaveStatus?: string;
 }
 
-export function HomeScreen({ authenticatedGet, error, onJoinSession, onNavigate }: HomeScreenProps) {
+export function HomeScreen({
+  authenticatedGet,
+  error,
+  isRetryingPendingSave = false,
+  onJoinSession,
+  onNavigate,
+  onRetryPendingSave,
+  pendingRunResultCount = 0,
+  pendingSaveStatus,
+}: HomeScreenProps) {
   const [invitations, setInvitations] = useState<RunningSessionResponseDto[]>([]);
   const [weeklyDistanceMeters, setWeeklyDistanceMeters] = useState(0);
   const [activityCount, setActivityCount] = useState(0);
@@ -81,6 +94,25 @@ export function HomeScreen({ authenticatedGet, error, onJoinSession, onNavigate 
       </View>
       <Text style={styles.statusText}>{activityStatus}</Text>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {pendingRunResultCount > 0 ? (
+        <View style={styles.pendingSavePanel}>
+          <View style={styles.pendingSaveCopy}>
+            <Text style={styles.pendingSaveTitle}>저장 대기 중인 기록이 있습니다.</Text>
+            <Text style={styles.pendingSaveBody}>
+              앱을 삭제하면 이 기록은 복구할 수 없습니다. 연결이 돌아오면 다시 저장하세요.
+            </Text>
+            {pendingSaveStatus ? <Text style={styles.pendingSaveStatus}>{pendingSaveStatus}</Text> : null}
+          </View>
+          {onRetryPendingSave ? (
+            <PrimaryButton
+              disabled={isRetryingPendingSave}
+              label={isRetryingPendingSave ? "Retrying..." : "Retry Now"}
+              variant="secondary"
+              onPress={onRetryPendingSave}
+            />
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.actions}>
         <PrimaryButton label="Run With Friends" onPress={() => onNavigate("runSetup")} />
@@ -173,6 +205,33 @@ const styles = StyleSheet.create({
   errorText: {
     color: "#dc2626",
     fontSize: 14,
+    fontWeight: "800",
+  },
+  pendingSavePanel: {
+    gap: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#fed7aa",
+    backgroundColor: "#fff7ed",
+    padding: 14,
+  },
+  pendingSaveCopy: {
+    gap: 4,
+  },
+  pendingSaveTitle: {
+    color: "#9a3412",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  pendingSaveBody: {
+    color: "#7c2d12",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  pendingSaveStatus: {
+    color: "#9a3412",
+    fontSize: 12,
     fontWeight: "800",
   },
 });

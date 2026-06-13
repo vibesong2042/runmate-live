@@ -9,10 +9,13 @@ export interface LiveRunDiagnostics {
   pendingLocationUpdates: number;
   lastSyncedAt?: string;
   gpsAccuracyMeters?: number;
+  gpsAccuracySamples?: number[];
   speedMps?: number;
+  speedSamples?: number[];
   trackingQuality: string;
   acceptedPointCount: number;
   rejectedPointCount: number;
+  lastWsCloseCode?: number;
   updatedAt: string;
 }
 

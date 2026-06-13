@@ -36,6 +36,7 @@ export interface LiveRunTrackerState {
   rejectedPointCount: number;
   pendingLocationUpdates: number;
   reconnectAttempt: number;
+  lastWsCloseCode?: number;
   lastSyncedAt?: string;
   isTracking: boolean;
   elapsedSeconds: number;
@@ -43,7 +44,9 @@ export interface LiveRunTrackerState {
   currentPaceSecPerKm?: number;
   averagePaceSecPerKm?: number;
   accuracyMeters?: number;
+  gpsAccuracySamples: number[];
   speedMps?: number;
+  speedSamples: number[];
   latitude?: number;
   longitude?: number;
   lastLocationAt?: string;
@@ -107,6 +110,8 @@ export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessTok
     rejectedPointCount: 0,
     pendingLocationUpdates: 0,
     reconnectAttempt: 0,
+    gpsAccuracySamples: [],
+    speedSamples: [],
   });
   const startedAtRef = useRef<number | undefined>(undefined);
   const acceptedPointRef = useRef<GeoPoint | undefined>(undefined);
@@ -123,11 +128,14 @@ export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessTok
     void saveLiveRunDiagnostics({
       acceptedPointCount: nextState.acceptedPointCount,
       gpsAccuracyMeters: nextState.accuracyMeters,
+      gpsAccuracySamples: nextState.gpsAccuracySamples,
       lastSyncedAt: nextState.lastSyncedAt,
+      lastWsCloseCode: nextState.lastWsCloseCode,
       pendingLocationUpdates: nextState.pendingLocationUpdates,
       reconnectAttempt: nextState.reconnectAttempt,
       rejectedPointCount: nextState.rejectedPointCount,
       speedMps: nextState.speedMps,
+      speedSamples: nextState.speedSamples,
       syncMessage: nextState.syncMessage,
       syncStatus: nextState.syncStatus,
       trackingQuality: nextState.trackingQuality,
@@ -356,7 +364,12 @@ export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessTok
         acceptedPointCount: current.acceptedPointCount + acceptedPointIncrement,
         rejectedPointCount: current.rejectedPointCount + rejectedPointIncrement,
         accuracyMeters: nextPoint.accuracyMeters,
+        gpsAccuracySamples:
+          nextPoint.accuracyMeters === undefined
+            ? current.gpsAccuracySamples
+            : [...current.gpsAccuracySamples, nextPoint.accuracyMeters].slice(-5),
         speedMps,
+        speedSamples: speedMps === undefined ? current.speedSamples : [...current.speedSamples, speedMps].slice(-5),
         latitude: nextPoint.latitude,
         longitude: nextPoint.longitude,
         lastLocationAt: recordedAt,
@@ -401,6 +414,7 @@ export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessTok
             syncStatus: update.status,
             syncMessage: update.message,
             reconnectAttempt: update.attempt,
+            lastWsCloseCode: update.closeCode ?? current.lastWsCloseCode,
             pendingLocationUpdates: pendingLocationQueueRef.current.length,
           }));
           if (update.status === "open") {
@@ -426,6 +440,8 @@ export function useLiveRunTracker({ sessionId, userId, accessToken, getAccessTok
       rejectedPointCount: 0,
       pendingLocationUpdates: pendingLocationQueueRef.current.length,
       reconnectAttempt: 0,
+      gpsAccuracySamples: [],
+      speedSamples: [],
       syncMessage: accessToken === "demo-access-token" ? "Demo mode is local only" : "Opening live sync",
       latestCheer: undefined,
     };

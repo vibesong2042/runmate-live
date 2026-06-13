@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "re
 import type { RunningSession, RunningSessionParticipant } from "@runmate/shared";
 import { ApiError, type FriendSummaryDto } from "../api/client";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { classifyApiError } from "../utils/error-messages";
 
 interface RunSetupScreenProps {
   accessToken?: string;
@@ -140,6 +141,10 @@ export function RunSetupScreen({ accessToken, authenticatedGet, authenticatedPos
 }
 
 function getRunStartErrorMessage(error: unknown): string {
+  const classified = classifyApiError(error, "Could not start the running session.");
+  if (classified.kind === "network" || classified.kind === "timeout" || classified.kind === "rate_limit") {
+    return classified.message;
+  }
   if (!(error instanceof ApiError)) {
     return "Could not start the running session. Try again.";
   }
@@ -153,7 +158,7 @@ function getRunStartErrorMessage(error: unknown): string {
     return error.message || "Only accepted friends can be invited to this run.";
   }
   if (error.status >= 500) {
-    return "Server error while starting the run. Try again in a moment.";
+    return classified.message;
   }
   return error.message || "Could not start the running session.";
 }

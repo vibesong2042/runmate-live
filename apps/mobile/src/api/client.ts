@@ -1,5 +1,6 @@
 import type { ActivityRecord, LiveLocation, RunningSession, RunningSessionParticipant } from "@runmate/shared";
 import { API_URL, ENABLE_DEMO_FALLBACK, buildApiConnectionHelp } from "../config/runtime";
+import { saveLastApiDiagnostic } from "../storage/api-diagnostics";
 
 export { API_URL } from "../config/runtime";
 
@@ -89,6 +90,12 @@ async function buildHttpError(method: string, path: string, response: Response):
   } catch {
     // Keep the status-based fallback when the API does not return JSON.
   }
+  void saveLastApiDiagnostic({
+    path,
+    reason,
+    status: response.status,
+    url: `${API_URL}${path}`,
+  });
   return new ApiError(reason, response.status, path, { url: `${API_URL}${path}`, reason });
 }
 
@@ -106,6 +113,13 @@ async function fetchWithTimeout(path: string, init: RequestInit): Promise<Respon
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Network request failed";
+    void saveLastApiDiagnostic({
+      path,
+      reason,
+      status: 0,
+      timeoutMs: /abort|timeout/i.test(reason) ? REQUEST_TIMEOUT_MS : undefined,
+      url: `${API_URL}${path}`,
+    });
     throw new ApiError(buildApiConnectionHelp(reason), 0, path, { url: `${API_URL}${path}`, reason });
   } finally {
     clearTimeout(timeout);

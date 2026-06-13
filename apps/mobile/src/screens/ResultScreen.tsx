@@ -108,7 +108,7 @@ function getSaveStatusBody(result: RunResultSummary | undefined, isRetrying: boo
     return result.saveError ?? "The API is still unavailable. Try again when the connection is back.";
   }
   if (result?.saveStatus === "pending") {
-    return "The API was unavailable at finish. This result is kept on this phone so you can retry.";
+    return "The API was unavailable at finish. This result is kept on this phone so you can retry. It is lost if the app is reinstalled.";
   }
   return "If the API was offline, this result may only be visible on this screen.";
 }

@@ -14,6 +14,7 @@ import { MetricTile } from "../components/MetricTile";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useLiveRunTracker } from "../hooks/useLiveRunTracker";
 import { savePendingRunResult } from "../storage/pending-run-results";
+import { classifyApiError } from "../utils/error-messages";
 import type { RunResultSummary } from "./ResultScreen";
 
 interface LiveRunScreenProps {
@@ -503,7 +504,9 @@ export function LiveRunScreen({
           sessionId,
           result: pendingResult,
           createdAt: new Date().toISOString(),
+          autoRetryDisabled: false,
           lastError: message,
+          retryCount: 0,
         });
       } catch {
         // The result screen still keeps the local summary for the current app session.
@@ -857,6 +860,10 @@ function formatDistanceTrackingStatus(quality: string): string {
 }
 
 function getFinishErrorMessage(error: unknown): string {
+  const classified = classifyApiError(error, "The API was unavailable when finishing this run.");
+  if (classified.kind === "network" || classified.kind === "timeout") {
+    return `${classified.message} This result is kept on this phone.`;
+  }
   if (!(error instanceof ApiError)) {
     return "The API was unavailable when finishing this run.";
   }
@@ -867,7 +874,7 @@ function getFinishErrorMessage(error: unknown): string {
     return "Sign-in expired while finishing. This result is kept on this phone.";
   }
   if (error.status >= 500) {
-    return "Server error while finishing. This result is kept on this phone.";
+    return `${classified.message} This result is kept on this phone.`;
   }
   return error.message || "This result is kept on this phone until the API is available.";
 }
