@@ -1,1 +1,1 @@
-export type AppScreen = "home" | "friends" | "runSetup" | "liveRun" | "result" | "profile" | "settings";
+export type AppScreen = "home" | "friends" | "soloRun" | "runSetup" | "liveRun" | "result" | "profile" | "settings";

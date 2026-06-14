@@ -2,6 +2,7 @@ import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { formatPace } from "@runmate/shared";
 import type { SessionParticipantSummaryDto } from "../api/client";
+import type { GeoPoint } from "@runmate/shared";
 import { MetricTile } from "../components/MetricTile";
 import { PrimaryButton } from "../components/PrimaryButton";
 
@@ -15,6 +16,8 @@ export interface RunResultSummary {
   saveStatus?: "saved" | "pending" | "retrying" | "failed";
   pendingResultId?: string;
   saveError?: string;
+  route?: GeoPoint[];
+  lastPoint?: GeoPoint;
 }
 
 export function ResultScreen({

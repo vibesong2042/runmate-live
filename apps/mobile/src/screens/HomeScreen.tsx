@@ -63,9 +63,7 @@ export function HomeScreen({
         const now = Date.now();
         const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
         const weeklyActivities = response.activities.filter((activity) => Date.parse(activity.createdAt) >= sevenDaysAgo);
-        setWeeklyDistanceMeters(
-          weeklyActivities.reduce((total, activity) => total + activity.distanceMeters, 0),
-        );
+        setWeeklyDistanceMeters(weeklyActivities.reduce((total, activity) => total + activity.distanceMeters, 0));
         setActivityCount(response.activities.length);
         setActivityStatus(response.activities.length ? "Activity summary synced" : "No completed runs yet");
       })
@@ -85,7 +83,7 @@ export function HomeScreen({
     <ScrollView contentContainerStyle={styles.container}>
       <View>
         <Text style={styles.kicker}>Today</Text>
-        <Text style={styles.title}>Start a remote 5K with your friends.</Text>
+        <Text style={styles.title}>Start a run your way.</Text>
       </View>
 
       <View style={styles.metricsRow}>
@@ -97,9 +95,10 @@ export function HomeScreen({
       {pendingRunResultCount > 0 ? (
         <View style={styles.pendingSavePanel}>
           <View style={styles.pendingSaveCopy}>
-            <Text style={styles.pendingSaveTitle}>저장 대기 중인 기록이 있습니다.</Text>
+            <Text style={styles.pendingSaveTitle}>Run result waiting to save.</Text>
             <Text style={styles.pendingSaveBody}>
-              앱을 삭제하면 이 기록은 복구할 수 없습니다. 연결이 돌아오면 다시 저장하세요.
+              This result is stored on this phone. Retry when the API connection is available. It is lost if the app is
+              reinstalled.
             </Text>
             {pendingSaveStatus ? <Text style={styles.pendingSaveStatus}>{pendingSaveStatus}</Text> : null}
           </View>
@@ -115,7 +114,8 @@ export function HomeScreen({
       ) : null}
 
       <View style={styles.actions}>
-        <PrimaryButton label="Run With Friends" onPress={() => onNavigate("runSetup")} />
+        <PrimaryButton label="Solo Run" onPress={() => onNavigate("soloRun")} />
+        <PrimaryButton label="Run With Friends" variant="secondary" onPress={() => onNavigate("runSetup")} />
         <PrimaryButton label="Invite Friends" variant="secondary" onPress={() => onNavigate("friends")} />
       </View>
 

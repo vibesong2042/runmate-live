@@ -10,6 +10,7 @@ import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ResultScreen, type RunResultSummary } from "./src/screens/ResultScreen";
 import { RunSetupScreen } from "./src/screens/RunSetupScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
+import { SoloRunScreen } from "./src/screens/solo/SoloRunScreen";
 import { useAuthSession } from "./src/hooks/useAuthSession";
 import {
   loadPendingRunResults,
@@ -78,6 +79,7 @@ function AppShell() {
       setIsRetryingSave(true);
       setPendingSaveStatus(automatic ? "Retrying pending save automatically..." : "Retrying pending save...");
       try {
+        await uploadPendingLastLocation(auth.authenticatedPost, entry);
         await auth.authenticatedPost(`/running-sessions/${entry.sessionId}/finish`, {});
         await removePendingRunResult(entry.id);
         await refreshPendingResults();
@@ -275,6 +277,19 @@ function AppShell() {
         />
       );
     }
+    if (screen === "soloRun" && auth.session) {
+      return (
+        <SoloRunScreen
+          authenticatedPost={auth.authenticatedPost}
+          onCancel={() => setScreen("home")}
+          onFinish={(result) => {
+            setLastRunResult(result);
+            setScreen("result");
+          }}
+          userId={auth.session.user.id}
+        />
+      );
+    }
     if (screen === "liveRun" && activeSessionId && auth.session) {
       return (
         <LiveRunScreen
@@ -334,7 +349,7 @@ function AppShell() {
   return (
     <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
       <View style={styles.app}>{activeScreen}</View>
-      {hasOnboarded && !["runSetup", "liveRun", "result"].includes(screen) ? (
+      {hasOnboarded && !["soloRun", "runSetup", "liveRun", "result"].includes(screen) ? (
         <View style={styles.tabBar}>
           {tabs.map((tab) => (
             <TouchableOpacity
@@ -350,6 +365,27 @@ function AppShell() {
       ) : null}
     </SafeAreaView>
   );
+}
+
+async function uploadPendingLastLocation(
+  authenticatedPost: <T>(path: string, body?: unknown) => Promise<T>,
+  entry: PendingRunResult,
+): Promise<void> {
+  const point = entry.result.lastPoint;
+  if (!point) {
+    return;
+  }
+  await authenticatedPost(`/running-sessions/${entry.sessionId}/locations`, {
+    accuracyMeters: point.accuracyMeters,
+    altitude: point.altitude,
+    averagePaceSecPerKm: entry.result.averagePaceSecPerKm,
+    currentPaceSecPerKm: undefined,
+    distanceMeters: entry.result.distanceMeters,
+    latitude: point.latitude,
+    longitude: point.longitude,
+    recordedAt: point.recordedAt ?? new Date().toISOString(),
+    state: "finished",
+  });
 }
 
 function getJoinErrorMessage(error: unknown): string {
