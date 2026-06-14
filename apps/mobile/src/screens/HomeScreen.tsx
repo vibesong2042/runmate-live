@@ -114,7 +114,7 @@ export function HomeScreen({
       ) : null}
 
       <View style={styles.actions}>
-        <PrimaryButton label="Solo Run" onPress={() => onNavigate("soloRun")} />
+        <PrimaryButton label="Solo Run" onPress={() => onNavigate("soloModeSelect")} />
         <PrimaryButton label="Run With Friends" variant="secondary" onPress={() => onNavigate("runSetup")} />
         <PrimaryButton label="Invite Friends" variant="secondary" onPress={() => onNavigate("friends")} />
       </View>

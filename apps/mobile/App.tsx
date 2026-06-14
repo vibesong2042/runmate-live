@@ -10,7 +10,12 @@ import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ResultScreen, type RunResultSummary } from "./src/screens/ResultScreen";
 import { RunSetupScreen } from "./src/screens/RunSetupScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
+import { CourseSelectScreen } from "./src/screens/solo/CourseSelectScreen";
+import { SoloModeSelectScreen } from "./src/screens/solo/SoloModeSelectScreen";
 import { SoloRunScreen } from "./src/screens/solo/SoloRunScreen";
+import { VirtualRunResultScreen } from "./src/screens/solo/VirtualRunResultScreen";
+import { VirtualRunScreen } from "./src/screens/solo/VirtualRunScreen";
+import type { VirtualRunResultSummary } from "./src/types/virtualCourse";
 import { useAuthSession } from "./src/hooks/useAuthSession";
 import {
   loadPendingRunResults,
@@ -46,7 +51,9 @@ function AppShell() {
   const [hasOnboarded, setHasOnboarded] = useState(false);
   const [screen, setScreen] = useState<AppScreen>("home");
   const [activeSessionId, setActiveSessionId] = useState<string>();
+  const [selectedCourseId, setSelectedCourseId] = useState<string>();
   const [lastRunResult, setLastRunResult] = useState<RunResultSummary>();
+  const [lastVirtualRunResult, setLastVirtualRunResult] = useState<VirtualRunResultSummary>();
   const [isRetryingSave, setIsRetryingSave] = useState(false);
   const [pendingResults, setPendingResults] = useState<PendingRunResult[]>([]);
   const [pendingSaveStatus, setPendingSaveStatus] = useState<string>();
@@ -277,6 +284,26 @@ function AppShell() {
         />
       );
     }
+    if (screen === "soloModeSelect") {
+      return (
+        <SoloModeSelectScreen
+          onBack={() => setScreen("home")}
+          onSelectStandard={() => setScreen("soloRun")}
+          onSelectVirtual={() => setScreen("courseSelect")}
+        />
+      );
+    }
+    if (screen === "courseSelect") {
+      return (
+        <CourseSelectScreen
+          onBack={() => setScreen("soloModeSelect")}
+          onSelectCourse={(courseId) => {
+            setSelectedCourseId(courseId);
+            setScreen("virtualRun");
+          }}
+        />
+      );
+    }
     if (screen === "soloRun" && auth.session) {
       return (
         <SoloRunScreen
@@ -285,6 +312,21 @@ function AppShell() {
           onFinish={(result) => {
             setLastRunResult(result);
             setScreen("result");
+          }}
+          userId={auth.session.user.id}
+        />
+      );
+    }
+    if (screen === "virtualRun" && auth.session && selectedCourseId) {
+      return (
+        <VirtualRunScreen
+          authenticatedPost={auth.authenticatedPost}
+          courseId={selectedCourseId}
+          onCancel={() => setScreen("courseSelect")}
+          onFinish={(result, virtualResult) => {
+            setLastRunResult(result);
+            setLastVirtualRunResult(virtualResult);
+            setScreen("virtualRunResult");
           }}
           userId={auth.session.user.id}
         />
@@ -320,6 +362,22 @@ function AppShell() {
         />
       );
     }
+    if (screen === "virtualRunResult") {
+      return (
+        <VirtualRunResultScreen
+          isRetryingSave={isRetryingSave}
+          result={lastRunResult}
+          virtualResult={lastVirtualRunResult}
+          onRetrySave={(result) => void retryPendingResultSave(result)}
+          onDone={() => {
+            setSelectedCourseId(undefined);
+            setLastRunResult(undefined);
+            setLastVirtualRunResult(undefined);
+            setScreen("home");
+          }}
+        />
+      );
+    }
     if (screen === "profile") {
       return <ProfileScreen authenticatedGet={auth.authenticatedGet} />;
     }
@@ -339,17 +397,22 @@ function AppShell() {
     homeError,
     isRetryingSave,
     lastRunResult,
+    lastVirtualRunResult,
     pendingResults,
     pendingSaveStatus,
     retryFirstPendingSave,
     retryPendingResultSave,
     screen,
+    selectedCourseId,
   ]);
 
   return (
     <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
       <View style={styles.app}>{activeScreen}</View>
-      {hasOnboarded && !["soloRun", "runSetup", "liveRun", "result"].includes(screen) ? (
+      {hasOnboarded &&
+      !["soloModeSelect", "courseSelect", "soloRun", "virtualRun", "virtualRunResult", "runSetup", "liveRun", "result"].includes(
+        screen,
+      ) ? (
         <View style={styles.tabBar}>
           {tabs.map((tab) => (
             <TouchableOpacity
