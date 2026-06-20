@@ -114,6 +114,7 @@ export function useAuthSession() {
   const authStatus = useMemo(
     () => ({
       hasSession: Boolean(state.session),
+      userId: state.session?.user.id,
       runnerId: state.session?.user.runnerId,
       isDemoMode: state.session?.accessToken === "demo-access-token",
     }),

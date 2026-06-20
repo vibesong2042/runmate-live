@@ -3,7 +3,9 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import type { ActivitiesResponseDto, RunningSessionInvitationsDto, RunningSessionResponseDto } from "../api/client";
 import { MetricTile } from "../components/MetricTile";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { loadVirtualRunHistory } from "../storage/virtual-run-history";
 import type { AppScreen } from "../state/app-state";
+import type { VirtualRunHistoryEntry } from "../types/virtualCourse";
 
 interface HomeScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
@@ -14,6 +16,7 @@ interface HomeScreenProps {
   onRetryPendingSave?: () => void;
   pendingRunResultCount?: number;
   pendingSaveStatus?: string;
+  userId: string;
 }
 
 export function HomeScreen({
@@ -25,12 +28,14 @@ export function HomeScreen({
   onRetryPendingSave,
   pendingRunResultCount = 0,
   pendingSaveStatus,
+  userId,
 }: HomeScreenProps) {
   const [invitations, setInvitations] = useState<RunningSessionResponseDto[]>([]);
   const [weeklyDistanceMeters, setWeeklyDistanceMeters] = useState(0);
   const [activityCount, setActivityCount] = useState(0);
   const [status, setStatus] = useState("Checking invited runs...");
   const [activityStatus, setActivityStatus] = useState("Loading activity summary...");
+  const [recentVirtualRun, setRecentVirtualRun] = useState<VirtualRunHistoryEntry>();
 
   useEffect(() => {
     let isMounted = true;
@@ -52,6 +57,18 @@ export function HomeScreen({
       isMounted = false;
     };
   }, [authenticatedGet]);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadVirtualRunHistory(userId).then((history) => {
+      if (isMounted) {
+        setRecentVirtualRun(history[0]);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -118,6 +135,18 @@ export function HomeScreen({
         <PrimaryButton label="Run With Friends" variant="secondary" onPress={() => onNavigate("runSetup")} />
         <PrimaryButton label="Invite Friends" variant="secondary" onPress={() => onNavigate("friends")} />
       </View>
+
+      {recentVirtualRun ? (
+        <View style={styles.virtualPanel}>
+          <Text style={styles.virtualTitle}>Latest Virtual Run</Text>
+          <Text style={styles.virtualName}>{recentVirtualRun.course.name}</Text>
+          <Text style={styles.virtualMeta}>
+            {(recentVirtualRun.distanceMeters / 1000).toFixed(2)} km - {Math.round(recentVirtualRun.progressPercent)}%
+            complete - {recentVirtualRun.isCompleted ? "course completed" : "in progress"}
+          </Text>
+          <Text style={styles.virtualNote}>Local virtual details are lost if the app is reinstalled.</Text>
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Invited Runs</Text>
@@ -233,5 +262,33 @@ const styles = StyleSheet.create({
     color: "#9a3412",
     fontSize: 12,
     fontWeight: "800",
+  },
+  virtualPanel: {
+    gap: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    backgroundColor: "#eff6ff",
+    padding: 14,
+  },
+  virtualTitle: {
+    color: "#1d4ed8",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  virtualName: {
+    color: "#0f172a",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  virtualMeta: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  virtualNote: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
   },
 });

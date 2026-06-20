@@ -3,13 +3,17 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { formatPace, type ActivityRecord } from "@runmate/shared";
 import type { ActivitiesResponseDto } from "../api/client";
 import { MetricTile } from "../components/MetricTile";
+import { loadVirtualRunHistory } from "../storage/virtual-run-history";
+import type { VirtualRunHistoryEntry } from "../types/virtualCourse";
 
 interface ProfileScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
+  userId: string;
 }
 
-export function ProfileScreen({ authenticatedGet }: ProfileScreenProps) {
+export function ProfileScreen({ authenticatedGet, userId }: ProfileScreenProps) {
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
+  const [virtualRuns, setVirtualRuns] = useState<VirtualRunHistoryEntry[]>([]);
   const [status, setStatus] = useState("Loading activity records...");
   const totalDistanceMeters = useMemo(
     () => activities.reduce((total, activity) => total + activity.distanceMeters, 0),
@@ -46,6 +50,18 @@ export function ProfileScreen({ authenticatedGet }: ProfileScreenProps) {
     };
   }, [authenticatedGet]);
 
+  useEffect(() => {
+    let isMounted = true;
+    loadVirtualRunHistory(userId).then((history) => {
+      if (isMounted) {
+        setVirtualRuns(history.slice(0, 5));
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Profile</Text>
@@ -72,6 +88,27 @@ export function ProfileScreen({ authenticatedGet }: ProfileScreenProps) {
         ) : (
           <Text style={styles.emptyText}>Finish a run to save your first activity.</Text>
         )}
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Virtual Runs</Text>
+        {virtualRuns.length ? (
+          virtualRuns.map((run) => (
+            <View key={run.id} style={styles.activityRow}>
+              <View style={styles.activityCopy}>
+                <Text style={styles.activityTitle}>{run.course.name}</Text>
+                <Text style={styles.activityMeta}>
+                  {(run.distanceMeters / 1000).toFixed(2)} km - {Math.round(run.progressPercent)}% -{" "}
+                  {formatActivityDate(run.completedAt)}
+                </Text>
+              </View>
+              <Text style={styles.activityPace}>{run.isCompleted ? "Done" : `${run.completedCheckpoints.length} CP`}</Text>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.emptyText}>Virtual course details appear after your first virtual run.</Text>
+        )}
+        <Text style={styles.emptyText}>Virtual details are stored on this phone and are lost if the app is reinstalled.</Text>
       </View>
 
       <View style={styles.panel}>
@@ -146,6 +183,9 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     fontSize: 15,
     fontWeight: "800",
+  },
+  activityCopy: {
+    flex: 1,
   },
   activityMeta: {
     marginTop: 3,

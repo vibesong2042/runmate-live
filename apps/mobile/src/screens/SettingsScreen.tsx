@@ -26,6 +26,7 @@ import type { PendingRunResult } from "../storage/pending-run-results";
 interface SettingsScreenProps {
   authStatus?: {
     hasSession: boolean;
+    userId?: string;
     runnerId?: string;
     isDemoMode: boolean;
   };
@@ -159,7 +160,9 @@ export function SettingsScreen({
 
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Beta Test Checklist</Text>
-        <Text style={styles.body}>카카오톡 제보 형식: N번 항목 / 증상 한 줄 / 진단 리포트 / 화면 캡처</Text>
+        <Text style={styles.body}>
+          Send by KakaoTalk: item number / short issue / diagnostic report / screenshot.
+        </Text>
         {BETA_CHECKLIST_ITEMS.map((item, index) => {
           const state = checklist?.[item.id];
           return (

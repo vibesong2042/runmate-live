@@ -23,6 +23,7 @@ import {
   savePendingRunResult,
   type PendingRunResult,
 } from "./src/storage/pending-run-results";
+import { updateVirtualRunHistorySaveStatus } from "./src/storage/virtual-run-history";
 import type { AppScreen } from "./src/state/app-state";
 import { ApiError } from "./src/api/client";
 import { initializeSentry, withSentry } from "./src/monitoring/sentry";
@@ -89,6 +90,7 @@ function AppShell() {
         await uploadPendingLastLocation(auth.authenticatedPost, entry);
         await auth.authenticatedPost(`/running-sessions/${entry.sessionId}/finish`, {});
         await removePendingRunResult(entry.id);
+        await updateVirtualRunHistorySaveStatus(auth.session.user.id, entry.sessionId, "saved");
         await refreshPendingResults();
         if (lastRunResult?.pendingResultId === entry.id) {
           setLastRunResult({
@@ -117,6 +119,7 @@ function AppShell() {
           },
         };
         await savePendingRunResult(nextEntry);
+        await updateVirtualRunHistorySaveStatus(auth.session.user.id, entry.sessionId, "failed");
         await refreshPendingResults();
         setPendingSaveStatus(
           nextEntry.autoRetryDisabled
@@ -238,7 +241,7 @@ function AppShell() {
       );
     }
 
-    if (screen === "home") {
+    if (screen === "home" && auth.session) {
       return (
         <HomeScreen
           authenticatedGet={auth.authenticatedGet}
@@ -258,6 +261,7 @@ function AppShell() {
           onRetryPendingSave={() => void retryFirstPendingSave(false)}
           pendingSaveStatus={pendingSaveStatus}
           pendingRunResultCount={pendingResults.length}
+          userId={auth.session.user.id}
         />
       );
     }
@@ -293,7 +297,7 @@ function AppShell() {
         />
       );
     }
-    if (screen === "courseSelect") {
+    if (screen === "courseSelect" && auth.session) {
       return (
         <CourseSelectScreen
           onBack={() => setScreen("soloModeSelect")}
@@ -301,6 +305,7 @@ function AppShell() {
             setSelectedCourseId(courseId);
             setScreen("virtualRun");
           }}
+          userId={auth.session.user.id}
         />
       );
     }
@@ -378,8 +383,8 @@ function AppShell() {
         />
       );
     }
-    if (screen === "profile") {
-      return <ProfileScreen authenticatedGet={auth.authenticatedGet} />;
+    if (screen === "profile" && auth.session) {
+      return <ProfileScreen authenticatedGet={auth.authenticatedGet} userId={auth.session.user.id} />;
     }
     return (
       <SettingsScreen

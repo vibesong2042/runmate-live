@@ -13,6 +13,7 @@ import { useSoloRun } from "../../hooks/useSoloRun";
 import { useVirtualCourse } from "../../hooks/useVirtualCourse";
 import { addDiagnosticBreadcrumb } from "../../monitoring/sentry";
 import { savePendingRunResult } from "../../storage/pending-run-results";
+import { saveVirtualRunHistoryEntry } from "../../storage/virtual-run-history";
 import type { SoloRunResult } from "../../types/soloRun";
 import type { GhostRunner, GhostState, VirtualRunResultSummary } from "../../types/virtualCourse";
 import { buildGhostAnnouncement, calculateGhostState, shouldAnnounceGhost } from "../../utils/ghost-runner";
@@ -167,6 +168,10 @@ export function VirtualRunScreen({ authenticatedPost, courseId, onCancel, onFini
     const summary = buildVirtualBaseResult(result, userId, sessionId);
     const virtualResult = buildVirtualResult(result, virtualCourse, ghostStates);
     if (!sessionId) {
+      await saveVirtualRunHistoryEntry(userId, virtualResult, {
+        completedAt: result.finishedAt,
+        saveStatus: "pending",
+      });
       onFinish(
         {
           ...summary,
@@ -182,6 +187,11 @@ export function VirtualRunScreen({ authenticatedPost, courseId, onCancel, onFini
     try {
       await uploadFinalVirtualLocation(authenticatedPost, sessionId, result);
       await authenticatedPost(`/running-sessions/${sessionId}/finish`, {});
+      await saveVirtualRunHistoryEntry(userId, virtualResult, {
+        completedAt: result.finishedAt,
+        saveStatus: "saved",
+        sessionId,
+      });
       addDiagnosticBreadcrumb(`virtual_run_finished:${course.id}`);
       onFinish({ ...summary, saveStatus: "saved" }, virtualResult);
     } catch (error) {
@@ -202,6 +212,11 @@ export function VirtualRunScreen({ authenticatedPost, courseId, onCancel, onFini
         retryCount: 0,
         sessionId,
         userId,
+      });
+      await saveVirtualRunHistoryEntry(userId, virtualResult, {
+        completedAt: result.finishedAt,
+        saveStatus: "pending",
+        sessionId,
       });
       onFinish(pending, virtualResult);
     } finally {

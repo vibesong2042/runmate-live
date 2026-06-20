@@ -12,9 +12,11 @@ import { getLastSentryEventId } from "../monitoring/sentry";
 import { loadLastApiDiagnostic } from "../storage/api-diagnostics";
 import { loadLiveRunDiagnostics } from "../storage/live-run-diagnostics";
 import type { PendingRunResult } from "../storage/pending-run-results";
+import { loadVirtualRunHistory } from "../storage/virtual-run-history";
 
 export interface DiagnosticReportAuthStatus {
   hasSession: boolean;
+  userId?: string;
   runnerId?: string;
   isDemoMode: boolean;
 }
@@ -26,10 +28,11 @@ export async function buildDiagnosticReport({
   authStatus?: DiagnosticReportAuthStatus;
   pendingResults: PendingRunResult[];
 }): Promise<string> {
-  const [networkState, diagnostics, lastApi] = await Promise.all([
+  const [networkState, diagnostics, lastApi, virtualHistory] = await Promise.all([
     Network.getNetworkStateAsync().catch(() => undefined),
     loadLiveRunDiagnostics(),
     loadLastApiDiagnostic(),
+    authStatus?.userId ? loadVirtualRunHistory(authStatus.userId) : Promise.resolve([]),
   ]);
   const generatedAt = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
   const version = Constants.expoConfig?.version ?? "unknown";
@@ -38,6 +41,7 @@ export async function buildDiagnosticReport({
   const os = `${Device.osName ?? "unknown"} ${Device.osVersion ?? ""}${
     Device.platformApiLevel ? ` (API ${Device.platformApiLevel})` : ""
   }`.trim();
+  const lastVirtualRun = virtualHistory[0];
 
   return [
     "[RunMate Diagnostic Report]",
@@ -77,6 +81,12 @@ export async function buildDiagnosticReport({
     "--- Pending Saves ---",
     `Pending Result Count: ${pendingResults.length}`,
     `Auto Retry Disabled Count: ${pendingResults.filter((result) => result.autoRetryDisabled).length}`,
+    "",
+    "--- Virtual Course ---",
+    `Last Course: ${lastVirtualRun?.course.id ?? "none"}`,
+    `Last Progress: ${lastVirtualRun ? `${Math.round(lastVirtualRun.progressPercent)}%` : "none"}`,
+    `Last Save Status: ${lastVirtualRun?.saveStatus ?? "none"}`,
+    `Last Virtual Run Time: ${formatDateTime(lastVirtualRun?.completedAt)}`,
     "",
     "--- Errors ---",
     `Sentry Last Event ID: ${getLastSentryEventId()}`,

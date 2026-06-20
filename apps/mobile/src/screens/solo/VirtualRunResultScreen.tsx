@@ -1,5 +1,5 @@
-import React from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useState } from "react";
+import { ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { formatPace } from "@runmate/shared";
 import { MetricTile } from "../../components/MetricTile";
 import { PrimaryButton } from "../../components/PrimaryButton";
@@ -23,6 +23,19 @@ export function VirtualRunResultScreen({
 }: VirtualRunResultScreenProps) {
   const canRetrySave =
     Boolean(result?.sessionId) && Boolean(result?.pendingResultId) && result?.saveStatus !== "saved" && !isRetryingSave;
+  const [shareStatus, setShareStatus] = useState<string>();
+
+  async function handleShare() {
+    if (!virtualResult) {
+      return;
+    }
+    try {
+      await shareVirtualResult(virtualResult);
+      setShareStatus("Share sheet opened.");
+    } catch {
+      setShareStatus("Could not open sharing. Your result is still saved on this phone.");
+    }
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -88,9 +101,32 @@ export function VirtualRunResultScreen({
         <Text style={styles.line}>Virtual result unavailable.</Text>
       )}
 
+      {virtualResult ? (
+        <>
+          <PrimaryButton label="Share Result" variant="secondary" onPress={() => void handleShare()} />
+          {shareStatus ? <Text style={styles.shareStatus}>{shareStatus}</Text> : null}
+        </>
+      ) : null}
       <PrimaryButton label="Back Home" onPress={onDone} />
     </ScrollView>
   );
+}
+
+async function shareVirtualResult(result: VirtualRunResultSummary): Promise<void> {
+  const checkpoints = result.completedCheckpoints.length
+    ? result.completedCheckpoints.map((checkpoint) => checkpoint.landmarkName).join(", ")
+    : "none";
+  await Share.share({
+    message: [
+      "RunMate Live Virtual Run",
+      `${result.course.name} (${result.course.city})`,
+      `Distance: ${(result.distanceMeters / 1000).toFixed(2)} km`,
+      `Progress: ${Math.round(result.progressPercent)}%`,
+      `Average pace: ${formatPace(result.averagePaceSecPerKm)}/km`,
+      `Checkpoints: ${checkpoints}`,
+      `Ghost runners passed: ${result.overtakenGhosts.length}`,
+    ].join("\n"),
+  });
 }
 
 function formatElapsed(totalSeconds: number): string {
@@ -210,5 +246,10 @@ const styles = StyleSheet.create({
     color: "#334155",
     fontSize: 14,
     fontWeight: "700",
+  },
+  shareStatus: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "800",
   },
 });

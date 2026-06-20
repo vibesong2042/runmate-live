@@ -54,3 +54,18 @@ export interface VirtualRunResultSummary {
   isCompleted: boolean;
   progressPercent: number;
 }
+
+export interface VirtualRunHistoryEntry extends VirtualRunResultSummary {
+  id: string;
+  completedAt: string;
+  saveStatus?: "saved" | "pending" | "retrying" | "failed";
+  sessionId?: string;
+}
+
+export interface VirtualCourseProgress {
+  courseId: string;
+  lastRunAt: string;
+  bestProgressPercent: number;
+  lastProgressPercent: number;
+  isCompleted: boolean;
+}
