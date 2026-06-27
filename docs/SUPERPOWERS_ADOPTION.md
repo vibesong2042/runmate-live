@@ -6,6 +6,8 @@ This document defines how to use Superpowers for RunMate Live development in Cod
 
 Use Superpowers in balanced mode. Apply the full design, plan, TDD, review, and verification flow to high-risk product and engineering changes. Keep the flow light for copy, visual polish, documentation, and short investigation tasks.
 
+For high-risk RunMate work, use `docs/RUNMATE_HIGH_RISK_REVIEW_HARNESS.md` as the concrete checklist before implementation. It is a review and handoff template only; do not install or run `my_harness`, create global skills, overwrite local agent instructions, enable external reviewers, or use production secrets without explicit approval.
+
 ## Strong Superpowers Scope
 
 Use Superpowers strongly before implementing changes in these areas:
