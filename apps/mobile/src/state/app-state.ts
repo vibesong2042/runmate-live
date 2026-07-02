@@ -1,6 +1,7 @@
 export type AppScreen =
   | "home"
   | "friends"
+  | "designStudio"
   | "soloModeSelect"
   | "courseSelect"
   | "soloRun"

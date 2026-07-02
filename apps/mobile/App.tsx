@@ -3,6 +3,7 @@ import { AppState, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, V
 import * as Network from "expo-network";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { FriendsScreen } from "./src/screens/FriendsScreen";
+import { DesignStudioScreen } from "./src/screens/DesignStudioScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { LiveRunScreen } from "./src/screens/LiveRunScreen";
 import { OnboardingScreen } from "./src/screens/OnboardingScreen";
@@ -16,6 +17,7 @@ import { SoloRunScreen } from "./src/screens/solo/SoloRunScreen";
 import { VirtualRunResultScreen } from "./src/screens/solo/VirtualRunResultScreen";
 import { VirtualRunScreen } from "./src/screens/solo/VirtualRunScreen";
 import type { VirtualRunResultSummary } from "./src/types/virtualCourse";
+import type { RunMateThemeId } from "@runmate/shared";
 import { useAuthSession } from "./src/hooks/useAuthSession";
 import {
   loadPendingRunResults,
@@ -24,10 +26,16 @@ import {
   type PendingRunResult,
 } from "./src/storage/pending-run-results";
 import { updateVirtualRunHistorySaveStatus } from "./src/storage/virtual-run-history";
+import {
+  loadRunMateThemePreference,
+  resetRunMateThemePreference,
+  saveRunMateThemePreference,
+} from "./src/storage/ui-theme-preferences";
 import type { AppScreen } from "./src/state/app-state";
 import { ApiError } from "./src/api/client";
 import { initializeSentry, withSentry } from "./src/monitoring/sentry";
 import { classifyApiError } from "./src/utils/error-messages";
+import { getDefaultRunMateTheme, RunMateThemeProvider } from "./src/theme/RunMateThemeContext";
 
 initializeSentry();
 
@@ -59,7 +67,45 @@ function AppShell() {
   const [pendingResults, setPendingResults] = useState<PendingRunResult[]>([]);
   const [pendingSaveStatus, setPendingSaveStatus] = useState<string>();
   const [homeError, setHomeError] = useState<string>();
+  const [activeTheme, setActiveTheme] = useState(getDefaultRunMateTheme());
   const auth = useAuthSession();
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!auth.session) {
+      setActiveTheme(getDefaultRunMateTheme());
+      return () => {
+        isMounted = false;
+      };
+    }
+    loadRunMateThemePreference(auth.session.user.id).then((theme) => {
+      if (isMounted) {
+        setActiveTheme(theme);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [auth.session?.user.id]);
+
+  const saveActiveTheme = useCallback(
+    async (themeId: RunMateThemeId) => {
+      if (!auth.session) {
+        return;
+      }
+      const theme = await saveRunMateThemePreference(auth.session.user.id, themeId);
+      setActiveTheme(theme);
+    },
+    [auth.session],
+  );
+
+  const resetActiveTheme = useCallback(async () => {
+    if (!auth.session) {
+      return;
+    }
+    const theme = await resetRunMateThemePreference(auth.session.user.id);
+    setActiveTheme(theme);
+  }, [auth.session]);
 
   const refreshPendingResults = useCallback(async () => {
     if (!auth.session) {
@@ -274,6 +320,16 @@ function AppShell() {
         />
       );
     }
+    if (screen === "designStudio" && auth.session) {
+      return (
+        <DesignStudioScreen
+          activeThemeId={activeTheme.id}
+          onBack={() => setScreen("settings")}
+          onResetTheme={resetActiveTheme}
+          onUseTheme={saveActiveTheme}
+        />
+      );
+    }
     if (screen === "runSetup") {
       return (
         <RunSetupScreen
@@ -390,6 +446,7 @@ function AppShell() {
       <SettingsScreen
         authStatus={auth.authStatus}
         isRetryingPendingSave={isRetryingSave}
+        onOpenDesignStudio={() => setScreen("designStudio")}
         onRetryPendingSave={() => void retryFirstPendingSave(false)}
         pendingResults={pendingResults}
         pendingSaveStatus={pendingSaveStatus}
@@ -398,6 +455,7 @@ function AppShell() {
   }, [
     activeSessionId,
     auth,
+    activeTheme.id,
     hasOnboarded,
     homeError,
     isRetryingSave,
@@ -412,26 +470,30 @@ function AppShell() {
   ]);
 
   return (
-    <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
+    <RunMateThemeProvider theme={activeTheme}>
+      <SafeAreaView edges={["top", "right", "bottom", "left"]} style={[styles.safeArea, { backgroundColor: activeTheme.colors.background }]}>
       <View style={styles.app}>{activeScreen}</View>
       {hasOnboarded &&
-      !["soloModeSelect", "courseSelect", "soloRun", "virtualRun", "virtualRunResult", "runSetup", "liveRun", "result"].includes(
+      !["designStudio", "soloModeSelect", "courseSelect", "soloRun", "virtualRun", "virtualRunResult", "runSetup", "liveRun", "result"].includes(
         screen,
       ) ? (
-        <View style={styles.tabBar}>
+        <View style={[styles.tabBar, { backgroundColor: activeTheme.colors.surface, borderColor: activeTheme.colors.secondaryBorder }]}>
           {tabs.map((tab) => (
             <TouchableOpacity
               accessibilityRole="button"
               key={tab.screen}
               onPress={() => setScreen(tab.screen)}
-              style={[styles.tab, screen === tab.screen && styles.activeTab]}
+              style={[styles.tab, screen === tab.screen && { backgroundColor: activeTheme.colors.tabActiveBackground }]}
             >
-              <Text style={[styles.tabText, screen === tab.screen && styles.activeTabText]}>{tab.label}</Text>
+              <Text style={[styles.tabText, { color: activeTheme.colors.mutedText }, screen === tab.screen && styles.activeTabText]}>
+                {tab.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
       ) : null}
     </SafeAreaView>
+    </RunMateThemeProvider>
   );
 }
 

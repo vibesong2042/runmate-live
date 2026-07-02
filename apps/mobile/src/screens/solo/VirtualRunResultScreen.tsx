@@ -3,6 +3,7 @@ import { ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { formatPace } from "@runmate/shared";
 import { MetricTile } from "../../components/MetricTile";
 import { PrimaryButton } from "../../components/PrimaryButton";
+import { useRunMateTheme } from "../../theme/RunMateThemeContext";
 import type { VirtualRunResultSummary } from "../../types/virtualCourse";
 import type { RunResultSummary } from "../ResultScreen";
 
@@ -21,6 +22,7 @@ export function VirtualRunResultScreen({
   result,
   virtualResult,
 }: VirtualRunResultScreenProps) {
+  const theme = useRunMateTheme();
   const canRetrySave =
     Boolean(result?.sessionId) && Boolean(result?.pendingResultId) && result?.saveStatus !== "saved" && !isRetryingSave;
   const [shareStatus, setShareStatus] = useState<string>();
@@ -38,8 +40,8 @@ export function VirtualRunResultScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Virtual Run Complete</Text>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <Text style={[styles.title, { color: theme.colors.text }]}>Virtual Run Complete</Text>
       <View style={[styles.savePanel, result?.saveStatus === "saved" ? styles.savedPanel : styles.pendingPanel]}>
         <Text style={styles.saveTitle}>{getSaveStatusTitle(result?.saveStatus, isRetryingSave)}</Text>
         <Text style={styles.saveBody}>{getSaveStatusBody(result, isRetryingSave)}</Text>

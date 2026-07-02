@@ -1,5 +1,6 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
+import { useRunMateTheme } from "../theme/RunMateThemeContext";
 
 interface MetricTileProps {
   label: string;
@@ -8,10 +9,25 @@ interface MetricTileProps {
 }
 
 export function MetricTile({ label, value, tone = "default" }: MetricTileProps) {
+  const theme = useRunMateTheme();
   return (
-    <View style={[styles.tile, tone === "strong" && styles.strongTile]}>
-      <Text style={[styles.value, tone === "strong" && styles.strongValue]}>{value}</Text>
-      <Text style={[styles.label, tone === "strong" && styles.strongLabel]}>{label}</Text>
+    <View
+      style={[
+        styles.tile,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.secondaryBorder,
+        },
+        tone === "strong" && {
+          backgroundColor: theme.colors.metricStrongBackground,
+          borderColor: theme.colors.metricStrongBackground,
+        },
+      ]}
+    >
+      <Text style={[styles.value, { color: theme.colors.text }, tone === "strong" && styles.strongValue]}>{value}</Text>
+      <Text style={[styles.label, { color: theme.colors.mutedText }, tone === "strong" && { color: theme.colors.metricStrongLabel }]}>
+        {label}
+      </Text>
     </View>
   );
 }

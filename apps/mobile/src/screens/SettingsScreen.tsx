@@ -31,6 +31,7 @@ interface SettingsScreenProps {
     isDemoMode: boolean;
   };
   isRetryingPendingSave?: boolean;
+  onOpenDesignStudio?: () => void;
   onRetryPendingSave?: () => void;
   pendingResults?: PendingRunResult[];
   pendingSaveStatus?: string;
@@ -39,6 +40,7 @@ interface SettingsScreenProps {
 export function SettingsScreen({
   authStatus,
   isRetryingPendingSave = false,
+  onOpenDesignStudio,
   onRetryPendingSave,
   pendingResults = [],
   pendingSaveStatus,
@@ -121,6 +123,11 @@ export function SettingsScreen({
         <SettingRow label="Default live location sharing" value={defaultShare} onValueChange={setDefaultShare} />
         <SettingRow label="Voice feedback" value={voice} onValueChange={setVoice} />
         <SettingRow label="Safety contact alerts" value={safety} onValueChange={setSafety} />
+      </View>
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Design Studio</Text>
+        <Text style={styles.body}>Pick colors and button style together. Running controls stay clear and safe.</Text>
+        {onOpenDesignStudio ? <PrimaryButton label="Open Design Studio" variant="secondary" onPress={onOpenDesignStudio} /> : null}
       </View>
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Privacy</Text>

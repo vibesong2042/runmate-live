@@ -6,6 +6,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { loadVirtualRunHistory } from "../storage/virtual-run-history";
 import type { AppScreen } from "../state/app-state";
 import type { VirtualRunHistoryEntry } from "../types/virtualCourse";
+import { useRunMateTheme } from "../theme/RunMateThemeContext";
 
 interface HomeScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
@@ -30,6 +31,7 @@ export function HomeScreen({
   pendingSaveStatus,
   userId,
 }: HomeScreenProps) {
+  const theme = useRunMateTheme();
   const [invitations, setInvitations] = useState<RunningSessionResponseDto[]>([]);
   const [weeklyDistanceMeters, setWeeklyDistanceMeters] = useState(0);
   const [activityCount, setActivityCount] = useState(0);
@@ -97,10 +99,10 @@ export function HomeScreen({
   }, [authenticatedGet]);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: theme.colors.background }]}>
       <View>
-        <Text style={styles.kicker}>Today</Text>
-        <Text style={styles.title}>Start a run your way.</Text>
+        <Text style={[styles.kicker, { color: theme.colors.primary }]}>Today</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]}>Start a run your way.</Text>
       </View>
 
       <View style={styles.metricsRow}>
@@ -137,14 +139,14 @@ export function HomeScreen({
       </View>
 
       {recentVirtualRun ? (
-        <View style={styles.virtualPanel}>
-          <Text style={styles.virtualTitle}>Latest Virtual Run</Text>
-          <Text style={styles.virtualName}>{recentVirtualRun.course.name}</Text>
-          <Text style={styles.virtualMeta}>
+        <View style={[styles.virtualPanel, { backgroundColor: theme.colors.accentSoftBackground, borderColor: theme.colors.accentBorder }]}>
+          <Text style={[styles.virtualTitle, { color: theme.colors.accentText }]}>Latest Virtual Run</Text>
+          <Text style={[styles.virtualName, { color: theme.colors.text }]}>{recentVirtualRun.course.name}</Text>
+          <Text style={[styles.virtualMeta, { color: theme.colors.text }]}>
             {(recentVirtualRun.distanceMeters / 1000).toFixed(2)} km - {Math.round(recentVirtualRun.progressPercent)}%
             complete - {recentVirtualRun.isCompleted ? "course completed" : "in progress"}
           </Text>
-          <Text style={styles.virtualNote}>Local virtual details are lost if the app is reinstalled.</Text>
+          <Text style={[styles.virtualNote, { color: theme.colors.mutedText }]}>Local virtual details are lost if the app is reinstalled.</Text>
         </View>
       ) : null}
 

@@ -1,5 +1,6 @@
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity } from "react-native";
+import { useRunMateTheme } from "../theme/RunMateThemeContext";
 
 interface PrimaryButtonProps {
   label: string;
@@ -9,16 +10,23 @@ interface PrimaryButtonProps {
 }
 
 export function PrimaryButton({ label, onPress, variant = "primary", disabled = false }: PrimaryButtonProps) {
+  const theme = useRunMateTheme();
+  const buttonStyle =
+    variant === "primary"
+      ? { backgroundColor: theme.colors.primary }
+      : variant === "secondary"
+        ? { backgroundColor: theme.colors.surface, borderColor: theme.colors.secondaryBorder }
+        : undefined;
+  const labelStyle = variant === "secondary" ? { color: theme.colors.text } : { color: theme.colors.primaryText };
+
   return (
     <TouchableOpacity
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
-      style={[styles.button, styles[variant], disabled && styles.disabled]}
+      style={[styles.button, styles[variant], buttonStyle, disabled && styles.disabled]}
     >
-      <Text style={[styles.label, variant === "secondary" && styles.secondaryLabel, disabled && styles.disabledLabel]}>
-        {label}
-      </Text>
+      <Text style={[styles.label, labelStyle, disabled && styles.disabledLabel]}>{label}</Text>
     </TouchableOpacity>
   );
 }
