@@ -37,16 +37,20 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post("/auth/login", async (request, reply) => {
     const input = devLoginSchema.parse(request.body ?? {});
     const runnerId = input.runnerId ?? "runner";
-    const user =
+    const matchingUser =
       runnerId === "runner"
         ? await store.getDevUser()
-        : (await store.searchUsersByRunnerId(runnerId)).find((candidate) => candidate.runnerId === runnerId) ??
-          (await store.createUser({
-            email: `${runnerId.toLowerCase()}@example.com`,
-            provider: "email",
-            nickname: input.nickname ?? runnerId,
-            runnerId,
-          }));
+        : (await store.searchUsersByRunnerId(runnerId)).find(
+            (candidate) => candidate.runnerId.toLowerCase() === runnerId.toLowerCase(),
+          );
+    const user =
+      matchingUser ??
+      (await store.createUser({
+        email: `${runnerId.toLowerCase()}@example.com`,
+        provider: "email",
+        nickname: input.nickname ?? runnerId,
+        runnerId,
+      }));
     if (!user) {
       return reply.code(500).send({ message: "Development user could not be created" });
     }

@@ -159,6 +159,34 @@ test("runner can create a session, upload location, and finish with an activity"
   }
 });
 
+test("development login reuses runner IDs case-insensitively", async () => {
+  const app = await buildApp({ logger: false });
+  try {
+    const firstLogin = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      headers: { "content-type": "application/json" },
+      payload: { runnerId: "case_runner", nickname: "Case Runner" },
+    });
+    assert.equal(firstLogin.statusCode, 200);
+    const first = firstLogin.json<{ user: { id: string; runnerId: string } }>();
+
+    const secondLogin = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      headers: { "content-type": "application/json" },
+      payload: { runnerId: "Case_Runner", nickname: "Case Runner Updated" },
+    });
+    assert.equal(secondLogin.statusCode, 200);
+    const second = secondLogin.json<{ user: { id: string; runnerId: string } }>();
+
+    assert.equal(second.user.id, first.user.id);
+    assert.equal(second.user.runnerId, first.user.runnerId);
+  } finally {
+    await app.close();
+  }
+});
+
 test("two development users can connect with a friend invite code", async () => {
   const app = await buildApp({ logger: false });
   try {
