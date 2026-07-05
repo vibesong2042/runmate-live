@@ -5,6 +5,7 @@ import type { ActivitiesResponseDto } from "../api/client";
 import { MetricTile } from "../components/MetricTile";
 import { loadVirtualRunHistory } from "../storage/virtual-run-history";
 import type { VirtualRunHistoryEntry } from "../types/virtualCourse";
+import { buildRewardBadges } from "../utils/badges";
 
 interface ProfileScreenProps {
   authenticatedGet: <T>(path: string) => Promise<T>;
@@ -20,13 +21,7 @@ export function ProfileScreen({ authenticatedGet, userId }: ProfileScreenProps) 
     [activities],
   );
   const recentActivities = activities.slice(0, 5);
-  const hasWeekly10K = useMemo(() => {
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const weeklyDistanceMeters = activities
-      .filter((activity) => Date.parse(activity.createdAt) >= sevenDaysAgo)
-      .reduce((total, activity) => total + activity.distanceMeters, 0);
-    return weeklyDistanceMeters >= 10000;
-  }, [activities]);
+  const badges = useMemo(() => buildRewardBadges({ activities, virtualRuns }), [activities, virtualRuns]);
 
   useEffect(() => {
     let isMounted = true;
@@ -113,9 +108,27 @@ export function ProfileScreen({ authenticatedGet, userId }: ProfileScreenProps) 
 
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Badges</Text>
-        {activities.length ? <Text style={styles.badge}>First Remote Run</Text> : null}
-        {hasWeekly10K ? <Text style={styles.badge}>Weekly 10K</Text> : null}
-        {!activities.length && !hasWeekly10K ? <Text style={styles.emptyText}>Badges unlock after saved runs.</Text> : null}
+        <View style={styles.badgeGrid}>
+          {badges.map((badge) => {
+            const isEarned = badge.status === "earned";
+            return (
+              <View key={badge.id} style={[styles.badgeCard, isEarned ? styles.badgeCardEarned : styles.badgeCardLocked]}>
+                <View style={[styles.badgeIcon, isEarned ? styles.badgeIconEarned : styles.badgeIconLocked]}>
+                  <Text style={[styles.badgeIconText, isEarned ? styles.badgeIconTextEarned : styles.badgeIconTextLocked]}>
+                    {badge.shortLabel}
+                  </Text>
+                </View>
+                <View style={styles.badgeCopy}>
+                  <Text style={styles.badgeTitle}>{badge.label}</Text>
+                  <Text style={styles.badgeDescription}>{isEarned ? "Earned" : badge.description}</Text>
+                </View>
+                <Text style={[styles.badgeStatus, isEarned ? styles.badgeStatusEarned : styles.badgeStatusLocked]}>
+                  {isEarned ? "Earned" : "Locked"}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
       </View>
     </ScrollView>
   );
@@ -198,10 +211,72 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
-  badge: {
+  badgeCard: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  badgeCardEarned: {
+    borderColor: "#99f6e4",
+    backgroundColor: "#f0fdfa",
+  },
+  badgeCardLocked: {
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+  },
+  badgeCopy: {
+    flex: 1,
+  },
+  badgeDescription: {
+    marginTop: 3,
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  badgeGrid: {
+    gap: 8,
+  },
+  badgeIcon: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    height: 42,
+    width: 42,
+  },
+  badgeIconEarned: {
+    backgroundColor: "#0f766e",
+  },
+  badgeIconLocked: {
+    backgroundColor: "#e2e8f0",
+  },
+  badgeIconText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  badgeIconTextEarned: {
+    color: "#ffffff",
+  },
+  badgeIconTextLocked: {
+    color: "#475569",
+  },
+  badgeStatus: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  badgeStatusEarned: {
     color: "#0f766e",
+  },
+  badgeStatusLocked: {
+    color: "#64748b",
+  },
+  badgeTitle: {
+    color: "#0f172a",
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "900",
   },
   emptyText: {
     color: "#64748b",
